@@ -22,3 +22,6 @@ static inline void spin_unlock(spinlock_t *lock) {
 
 void *mymalloc(size_t size);
 void myfree(void *ptr);
+
+void *vmalloc(void *addr, size_t length);
+void vmfree(void *addr, size_t length);

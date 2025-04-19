@@ -21,6 +21,20 @@ SystemTest(trivial, ((const char *[]){})) {
     myfree(p2);
 }
 
+SystemTest(vmalloc, ((const char *[]){})) {
+    void *p1 = vmalloc(NULL, 4096);
+    tk_assert(p1 != NULL, "vmalloc should not return NULL");
+    tk_assert((uintptr_t)p1 % 4096 == 0, "vmalloc should return page-aligned address");
+
+    void *p2 = vmalloc(NULL, 8192);
+    tk_assert(p2 != NULL, "vmalloc should not return NULL");
+    tk_assert((uintptr_t)p2 % 4096 == 0, "vmalloc should return page-aligned address");
+    tk_assert(p1 != p2, "vmalloc should return different pointers");
+
+    vmfree(p1, 4096);
+    vmfree(p2, 8192);
+}
+
 #define N 100000
 void T_malloc() {
     for (int i = 0; i < N; i++) {
