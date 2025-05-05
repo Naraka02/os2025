@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# Generate HTML content first to calculate content length
+HTML_CONTENT=$(cat <<EOF
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Echo Request Information</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        .section { margin-bottom: 20px; }
+        .label { font-weight: bold; }
+        pre { background-color: #f5f5f5; padding: 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Echo Request Information</h1>
+    
+    <div class="section">
+        <div class="label">Request Method:</div>
+        <pre>${REQUEST_METHOD}</pre>
+    </div>
+    
+    <div class="section">
+        <div class="label">Query String:</div>
+        <pre>${QUERY_STRING}</pre>
+    </div>
+    
+    <div class="section">
+        <div class="label">Environment Variables:</div>
+        <pre>$(env | sort)</pre>
+    </div>
+    
+    <div class="section">
+        <div class="label">Current Date and Time:</div>
+        <pre>$(date)</pre>
+    </div>
+</body>
+</html>
+EOF
+)
+
+# Calculate content length
+CONTENT_LENGTH=${#HTML_CONTENT}
+
+# Output HTTP/1.1 headers
+echo "HTTP/1.1 200 OK"
+echo "Content-Type: text/html; charset=UTF-8"
+echo "Content-Length: $CONTENT_LENGTH"
+echo "Connection: close"
+echo ""
+
+# Output the HTML content
+echo "$HTML_CONTENT"
