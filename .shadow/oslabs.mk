@@ -27,7 +27,7 @@ lib$(NAME).so: $(DEPS)
 	$(CC) -fPIC -shared $(CFLAGS) $(SRCS) -o $@ $(LDFLAGS)
 
 clean:
-	rm -f lib$(NAME).so $(NAME)
+	rm -f lib$(NAME).so $(NAME) $(NAME).so $(NAME)_test
 
 git-trace:
 	@find ../.shadow/ -maxdepth 1 -type d -name '[a-z]*' | xargs rm -rf
