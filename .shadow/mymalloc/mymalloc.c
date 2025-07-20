@@ -1,7 +1,10 @@
 #include <mymalloc.h>
 #include <sys/mman.h>
+
+#ifndef SYS_gettid
+#define SYS_gettid 186
+#endif
 #include <unistd.h>
-#include <stdint.h>
 
 typedef struct block {
     size_t size;
@@ -91,16 +94,6 @@ static pool_t *find_pool_global(void *ptr) {
         }
     }
     return NULL;
-}
-
-static pool_t *find_pool(void *ptr) {
-    thread_cache_t *cache = get_thread_cache();
-    if (cache) {
-        pool_t *pool = find_pool_in_cache(cache, ptr);
-        if (pool) return pool;
-    }
-    
-    return find_pool_global(ptr);
 }
 
 static int add_pool_to_cache(thread_cache_t *cache, size_t size) {
