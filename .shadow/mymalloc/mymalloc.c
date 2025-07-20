@@ -148,8 +148,14 @@ void *mymalloc(size_t size) {
         }
     }
 
+    return allocate_slow_path(size);
+}
 
-    // slow path
+void *allocate_slow_path(size_t size) {
+    if (size == 0) {
+        return NULL;
+    }
+
     spin_lock(&big_lock);
 
     size = ALIGN(size + sizeof(block_t));
@@ -246,7 +252,6 @@ void myfree(void *ptr) {
         return;
     }
     
-    // slow path
     spin_lock(&big_lock);
 
     pool_t *pool = find_pool(ptr);
