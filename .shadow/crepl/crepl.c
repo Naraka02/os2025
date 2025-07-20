@@ -379,7 +379,6 @@ int main() {
     char *line;
     
     while ((line = readline(">> ")) != NULL) {
-    
         process_input_line(line);
         
         free(line);
