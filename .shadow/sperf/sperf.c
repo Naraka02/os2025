@@ -93,7 +93,6 @@ int compare_syscalls(const void *a, const void *b) {
 
 void print_top_syscalls(syscall_stats *stats, int n) {
     if (stats->count == 0) {
-        printf("No syscalls recorded.\n");
         return;
     }
     
@@ -103,12 +102,13 @@ void print_top_syscalls(syscall_stats *stats, int n) {
     int show_count = (n < stats->count) ? n : stats->count;
     
     for (int i = 0; i < show_count; i++) {
-        double percentage = (stats->stats[i].time / stats->total_time) * 100.0;
-        printf("%s (%d): %.6f s (%.2f%%)\n", 
-               stats->stats[i].name,
-               stats->stats[i].count,
-               stats->stats[i].time,
-               percentage);
+        int ratio = (int)((stats->stats[i].time / stats->total_time) * 100.0);
+        printf("%s (%d%%)\n", stats->stats[i].name, ratio);
+    }
+    
+    // Print 80 null characters as delimiter
+    for (int i = 0; i < 80; i++) {
+        printf("\0");
     }
 }
 
@@ -240,12 +240,7 @@ int main(int argc, char *argv[]) {
         waitpid(pid, &status, 0);
         
         // Print results
-        printf("\nTop %d system calls by time:\n", TOP_N);
         print_top_syscalls(&stats, TOP_N);
-        
-        if (stats.total_time > 0) {
-            printf("\nTotal time: %.6f s\n", stats.total_time);
-        }
         
         free(command_path);
         return WEXITSTATUS(status);
