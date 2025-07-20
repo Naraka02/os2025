@@ -23,7 +23,7 @@ spinlock_t big_lock = {UNLOCKED};
 
 static pool_t *find_pool(void *ptr) {
     for (pool_t *pool = pools; pool; pool = pool->next) {
-        if (ptr >= pool->start && ptr < (char *)pool->start + pool->total_size) {
+        if ((char *)ptr >= (char *)pool->start && (char *)ptr < (char *)pool->start + pool->total_size) {
             return pool;
         }
     }
