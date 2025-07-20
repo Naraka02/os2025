@@ -24,18 +24,31 @@ bool compile_and_load_function(const char* function_def) {
         return false;
     }
     
-    // Create unique temporary files
-    char temp_c_file[256];
-    char temp_so_file[256];
-    static int file_counter = 0;
+    // Create unique temporary files using mkstemp
+    char temp_c_file[] = "/tmp/crepl_func_XXXXXX.c";
+    char temp_so_file[] = "/tmp/crepl_func_XXXXXX.so";
     
-    snprintf(temp_c_file, sizeof(temp_c_file), "/tmp/crepl_func_%d_%d.c", getpid(), file_counter);
-    snprintf(temp_so_file, sizeof(temp_so_file), "/tmp/crepl_func_%d_%d.so", getpid(), file_counter);
-    file_counter++;
+    // Create temporary .c file
+    int c_fd = mkstemps(temp_c_file, 2); // suffix length is 2 (".c")
+    if (c_fd == -1) {
+        return false;
+    }
+    
+    // Create temporary .so file name (we only need the name)
+    int so_fd = mkstemps(temp_so_file, 3); // suffix length is 3 (".so")
+    if (so_fd == -1) {
+        close(c_fd);
+        unlink(temp_c_file);
+        return false;
+    }
+    close(so_fd); // We only need the filename, not the descriptor
     
     // Write the complete C file with includes and previous function declarations
-    FILE *c_file = fopen(temp_c_file, "w");
+    FILE *c_file = fdopen(c_fd, "w");
     if (!c_file) {
+        close(c_fd);
+        unlink(temp_c_file);
+        unlink(temp_so_file);
         return false;
     }
     
@@ -107,18 +120,31 @@ bool evaluate_expression(const char* expression, int* result) {
         return false;
     }
     
-    // Create unique temporary files
-    char temp_c_file[256];
-    char temp_exe_file[256];
-    static int eval_counter = 0;
+    // Create unique temporary files using mkstemp
+    char temp_c_file[] = "/tmp/crepl_eval_XXXXXX.c";
+    char temp_exe_file[] = "/tmp/crepl_eval_XXXXXX";
     
-    snprintf(temp_c_file, sizeof(temp_c_file), "/tmp/crepl_eval_%d_%d.c", getpid(), eval_counter);
-    snprintf(temp_exe_file, sizeof(temp_exe_file), "/tmp/crepl_eval_%d_%d", getpid(), eval_counter);
-    eval_counter++;
+    // Create temporary .c file
+    int c_fd = mkstemps(temp_c_file, 2); // suffix length is 2 (".c")
+    if (c_fd == -1) {
+        return false;
+    }
+    
+    // Create temporary executable file name
+    int exe_fd = mkstemp(temp_exe_file);
+    if (exe_fd == -1) {
+        close(c_fd);
+        unlink(temp_c_file);
+        return false;
+    }
+    close(exe_fd); // We only need the filename, not the descriptor
     
     // Write a C program that evaluates the expression
-    FILE *c_file = fopen(temp_c_file, "w");
+    FILE *c_file = fdopen(c_fd, "w");
     if (!c_file) {
+        close(c_fd);
+        unlink(temp_c_file);
+        unlink(temp_exe_file);
         return false;
     }
     
