@@ -21,9 +21,6 @@ void vmfree(void *addr, size_t length) {
     (void)length;
 }
 
-// This checks whether your code works for
-// freestanding environments.
-
 void _start() {
 }
 
