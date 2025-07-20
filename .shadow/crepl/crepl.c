@@ -6,44 +6,42 @@
 #include <dlfcn.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
 #define MAX_LINE_LEN 4096
 #define MAX_FUNCTIONS 256
 
-// Track loaded functions and shared libraries
 static char *loaded_functions[MAX_FUNCTIONS];
 static void *loaded_libs[MAX_FUNCTIONS];
-static char *loaded_so_files[MAX_FUNCTIONS];  // Store .so file paths
+static char *loaded_so_files[MAX_FUNCTIONS];
 static int function_count = 0;
 
-// Compile a function definition and load it
 bool compile_and_load_function(const char* function_def) {
     if (!function_def || strlen(function_def) == 0) {
         return false;
     }
     
-    // Create unique temporary files using mkstemp
     char temp_c_file[] = "/tmp/crepl_func_XXXXXX.c";
     char temp_so_file[] = "/tmp/crepl_func_XXXXXX.so";
     
     // Create temporary .c file
-    int c_fd = mkstemps(temp_c_file, 2); // suffix length is 2 (".c")
+    int c_fd = mkstemps(temp_c_file, 2); // suffix ".c"
     if (c_fd == -1) {
         return false;
     }
     
-    // Create temporary .so file name (we only need the name)
-    int so_fd = mkstemps(temp_so_file, 3); // suffix length is 3 (".so")
+    // Create temporary .so file name
+    int so_fd = mkstemps(temp_so_file, 3); // suffix ".so"
     if (so_fd == -1) {
         close(c_fd);
         unlink(temp_c_file);
         return false;
     }
-    close(so_fd); // We only need the filename, not the descriptor
+    close(so_fd);
     
-    // Write the complete C file with includes and previous function declarations
+    // Write the complete C file
     FILE *c_file = fdopen(c_fd, "w");
     if (!c_file) {
         close(c_fd);
@@ -69,13 +67,28 @@ bool compile_and_load_function(const char* function_def) {
     fprintf(c_file, "\n%s\n", function_def);
     fclose(c_file);
     
-    // Compile to shared library
-    char compile_cmd[1024];
-    snprintf(compile_cmd, sizeof(compile_cmd), 
-             "gcc -shared -fPIC -o %s %s 2>/dev/null", 
-             temp_so_file, temp_c_file);
+    // Compile to shared library using fork/exec instead of system
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child process: execute gcc
+        char *args[] = {"gcc", "-shared", "-fPIC", "-o", temp_so_file, temp_c_file, NULL};
+        // Redirect stderr to /dev/null
+        int dev_null = open("/dev/null", O_WRONLY);
+        if (dev_null != -1) {
+            dup2(dev_null, STDERR_FILENO);
+            close(dev_null);
+        }
+        execvp("gcc", args);
+        exit(1); // If execvp fails
+    }
     
-    int compile_result = system(compile_cmd);
+    int compile_result = -1;
+    if (pid > 0) {
+        // Parent process: wait for child
+        int status;
+        waitpid(pid, &status, 0);
+        compile_result = WEXITSTATUS(status);
+    }
     
     // Clean up source file
     unlink(temp_c_file);
@@ -92,9 +105,9 @@ bool compile_and_load_function(const char* function_def) {
         return false;
     }
     
-    // Store function declaration for future use
+    // Store function declaration
     if (function_count < MAX_FUNCTIONS) {
-        // Extract function signature for declaration
+        // Extract function signature
         char *func_decl = malloc(strlen(function_def) + 1);
         strcpy(func_decl, function_def);
         
@@ -114,18 +127,16 @@ bool compile_and_load_function(const char* function_def) {
     return true;
 }
 
-// Evaluate an expression
 bool evaluate_expression(const char* expression, int* result) {
     if (!expression || strlen(expression) == 0) {
         return false;
     }
     
-    // Create unique temporary files using mkstemp
     char temp_c_file[] = "/tmp/crepl_eval_XXXXXX.c";
     char temp_exe_file[] = "/tmp/crepl_eval_XXXXXX";
     
     // Create temporary .c file
-    int c_fd = mkstemps(temp_c_file, 2); // suffix length is 2 (".c")
+    int c_fd = mkstemps(temp_c_file, 2); // suffix ".c"
     if (c_fd == -1) {
         return false;
     }
@@ -137,7 +148,7 @@ bool evaluate_expression(const char* expression, int* result) {
         unlink(temp_c_file);
         return false;
     }
-    close(exe_fd); // We only need the filename, not the descriptor
+    close(exe_fd);
     
     // Write a C program that evaluates the expression
     FILE *c_file = fdopen(c_fd, "w");
@@ -154,7 +165,6 @@ bool evaluate_expression(const char* expression, int* result) {
     fprintf(c_file, "#include <string.h>\n");
     fprintf(c_file, "#include <math.h>\n\n");
     
-    // Add function definitions (not just declarations) for previously loaded functions
     for (int i = 0; i < function_count; i++) {
         if (loaded_functions[i]) {
             // Convert declaration back to a stub function
@@ -186,22 +196,55 @@ bool evaluate_expression(const char* expression, int* result) {
     fprintf(c_file, "}\n");
     fclose(c_file);
     
-    // Build linking arguments for all loaded shared libraries
-    char link_args[2048] = "";
-    for (int i = 0; i < function_count; i++) {
-        if (loaded_so_files[i] && access(loaded_so_files[i], F_OK) == 0) {
-            strcat(link_args, " ");
-            strcat(link_args, loaded_so_files[i]);
+    // Compile the program using fork/exec instead of system
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child process: execute gcc
+        // Count arguments: gcc -o output input [libs...] -ldl -lm
+        int arg_count = 5; // gcc, -o, output, input, NULL
+        for (int i = 0; i < function_count; i++) {
+            if (loaded_so_files[i] && access(loaded_so_files[i], F_OK) == 0) {
+                arg_count++;
+            }
         }
+        arg_count += 2; // -ldl, -lm
+        
+        char **args = malloc(arg_count * sizeof(char*));
+        int idx = 0;
+        args[idx++] = "gcc";
+        args[idx++] = "-o";
+        args[idx++] = temp_exe_file;
+        args[idx++] = temp_c_file;
+        
+        // Add shared library files
+        for (int i = 0; i < function_count; i++) {
+            if (loaded_so_files[i] && access(loaded_so_files[i], F_OK) == 0) {
+                args[idx++] = loaded_so_files[i];
+            }
+        }
+        
+        args[idx++] = "-ldl";
+        args[idx++] = "-lm";
+        args[idx] = NULL;
+        
+        // Redirect stderr to /dev/null
+        int dev_null = open("/dev/null", O_WRONLY);
+        if (dev_null != -1) {
+            dup2(dev_null, STDERR_FILENO);
+            close(dev_null);
+        }
+        
+        execvp("gcc", args);
+        exit(1); // If execvp fails
     }
     
-    // Compile the program
-    char compile_cmd[2048];
-    snprintf(compile_cmd, sizeof(compile_cmd), 
-             "gcc -o %s %s %s -ldl -lm 2>/dev/null", 
-             temp_exe_file, temp_c_file, link_args);
-    
-    int compile_result = system(compile_cmd);
+    int compile_result = -1;
+    if (pid > 0) {
+        // Parent process: wait for child
+        int status;
+        waitpid(pid, &status, 0);
+        compile_result = WEXITSTATUS(status);
+    }
     
     // Clean up source file
     unlink(temp_c_file);
@@ -234,22 +277,18 @@ bool evaluate_expression(const char* expression, int* result) {
     return success;
 }
 
-// Check if input looks like a function definition
 bool is_function_definition(const char* line) {
-    // Simple heuristic: contains both '(' and '{' and has a return type
     if (!line || strlen(line) < 5) return false;
     
     // Skip whitespace
     while (*line == ' ' || *line == '\t') line++;
     
-    // Look for common return types
     if (strncmp(line, "int ", 4) == 0 || 
         strncmp(line, "void ", 5) == 0 ||
         strncmp(line, "char ", 5) == 0 ||
         strncmp(line, "float ", 6) == 0 ||
         strncmp(line, "double ", 7) == 0) {
         
-        // Check for function signature pattern
         if (strchr(line, '(') && strchr(line, ')') && strchr(line, '{')) {
             return true;
         }
@@ -258,7 +297,6 @@ bool is_function_definition(const char* line) {
     return false;
 }
 
-// Clean up function to free resources
 void cleanup_crepl() {
     for (int i = 0; i < function_count; i++) {
         if (loaded_functions[i]) {
@@ -274,7 +312,6 @@ void cleanup_crepl() {
     }
 }
 
-// Wrapper function to handle function definition input
 void handle_function_definition(const char* line) {
     if (compile_and_load_function(line)) {
         printf("Function compiled and loaded successfully.\n");
@@ -284,7 +321,6 @@ void handle_function_definition(const char* line) {
     fflush(stdout);
 }
 
-// Wrapper function to handle expression evaluation
 void handle_expression(const char* line) {
     int result;
     if (evaluate_expression(line, &result)) {
@@ -295,17 +331,14 @@ void handle_expression(const char* line) {
     fflush(stdout);
 }
 
-// Wrapper function to process a single line of input
 void process_input_line(const char* line) {
     // Skip empty lines
     if (!line || strlen(line) == 0) {
         return;
     }
     
-    // Add to history for readline
     add_history(line);
     
-    // Check if it's a function definition or expression
     if (is_function_definition(line)) {
         handle_function_definition(line);
     } else {
@@ -313,7 +346,6 @@ void process_input_line(const char* line) {
     }
 }
 
-// Wrapper function for the main REPL loop
 void run_repl() {
     char *line;
     
@@ -321,16 +353,13 @@ void run_repl() {
     printf("Use Ctrl+D or 'exit' to quit.\n");
     
     while ((line = readline("> ")) != NULL) {
-        // Check for exit command
         if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) {
             free(line);
             break;
         }
         
-        // Process the input line
         process_input_line(line);
         
-        // Free the readline allocated memory
         free(line);
     }
 }
@@ -339,7 +368,6 @@ int main() {
     // Register cleanup function
     atexit(cleanup_crepl);
     
-    // Run the REPL
     run_repl();
     
     printf("\nGoodbye!\n");
