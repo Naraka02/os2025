@@ -67,11 +67,37 @@ bool compile_and_load_function(const char* function_def) {
     fprintf(c_file, "\n%s\n", function_def);
     fclose(c_file);
     
-    // Compile to shared library
+    // Compile to shared library with linking to previous libraries
     pid_t pid = fork();
     if (pid == 0) {
         // Child process: execute gcc
-        char *args[] = {"gcc", "-shared", "-fPIC", "-o", temp_so_file, temp_c_file, NULL};
+        int arg_count = 6; // gcc, -shared, -fPIC, -o, output, input, NULL
+        
+        // Count existing .so files to link
+        for (int i = 0; i < function_count; i++) {
+            if (loaded_so_files[i] && access(loaded_so_files[i], F_OK) == 0) {
+                arg_count++;
+            }
+        }
+        
+        char **args = malloc(arg_count * sizeof(char*));
+        int idx = 0;
+        args[idx++] = "gcc";
+        args[idx++] = "-shared";
+        args[idx++] = "-fPIC";
+        args[idx++] = "-o";
+        args[idx++] = temp_so_file;
+        args[idx++] = temp_c_file;
+        
+        // Link with existing shared libraries
+        for (int i = 0; i < function_count; i++) {
+            if (loaded_so_files[i] && access(loaded_so_files[i], F_OK) == 0) {
+                args[idx++] = loaded_so_files[i];
+            }
+        }
+        
+        args[idx] = NULL;
+        
         // Redirect stderr to /dev/null
         int dev_null = open("/dev/null", O_WRONLY);
         if (dev_null != -1) {
