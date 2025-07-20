@@ -255,7 +255,6 @@ void myfree(void *ptr) {
         return;
     }
     
-    block_t *block = (block_t*)((char*)ptr - sizeof(block_t));
     if (block->is_free) {
         spin_unlock(&big_lock);
         return;
