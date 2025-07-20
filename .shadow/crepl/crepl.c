@@ -278,34 +278,19 @@ bool evaluate_expression(const char* expression, int* result) {
     char output_buffer[256];
     bool success = false;
     ssize_t bytes_read = read(pipe_fd[0], output_buffer, sizeof(output_buffer) - 1);
-    
-    // Wait for child process and check exit status
-    int child_status = 0;
-    if (exec_pid > 0) {
-        waitpid(exec_pid, &child_status, 0);
-    }
-    
-    // Only process output if child exited successfully AND we got valid output
-    if (bytes_read > 0 && WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0) {
+    if (bytes_read > 0) {
         output_buffer[bytes_read] = '\0';
-        
-        // Trim whitespace
-        char *trimmed = output_buffer;
-        while (*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\n') trimmed++;
-        
-        // Check if the output is a valid number
-        char *endptr;
-        long val = strtol(trimmed, &endptr, 10);
-        
-        // Valid if we consumed the entire string (or only trailing whitespace)
-        while (*endptr == ' ' || *endptr == '\t' || *endptr == '\n') endptr++;
-        if (*endptr == '\0' && trimmed != endptr) {
-            *result = (int)val;
-            success = true;
-        }
+        *result = atoi(output_buffer);
+        success = true;
     }
     
     close(pipe_fd[0]);
+    
+    // Wait for child process
+    if (exec_pid > 0) {
+        int status;
+        waitpid(exec_pid, &status, 0);
+    }
     unlink(temp_exe_file);
     
     return success;
@@ -356,7 +341,6 @@ void handle_function_definition(const char* line) {
 }
 
 void handle_expression(const char* line) {
-    // Check for potentially problematic expressions
     if (strstr(line, "exit") && (strstr(line, "+") || strstr(line, "-") || strstr(line, "*") || strstr(line, "/"))) {
         printf("Error: 'exit' is not a valid variable in expressions.\n");
         fflush(stdout);
