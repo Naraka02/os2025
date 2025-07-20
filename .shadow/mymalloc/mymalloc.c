@@ -49,6 +49,38 @@ static int get_size_class(size_t size) {
     return -1;
 }
 
+static pool_t *find_pool(void *ptr) {
+    for (pool_t *pool = pools; pool; pool = pool->next) {
+        if (ptr >= pool->start && ptr < (char *)pool->start + pool->total_size) {
+            return pool;
+        }
+    }
+    return NULL;
+}
+
+static int add_pool(size_t size) {
+    size_t total_size = ((size + sizeof(pool_t) + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+
+    void *mem = vmalloc(NULL, total_size);
+    if (!mem) {
+        return 0;
+    }
+
+    pool_t *pool = (pool_t *)mem;
+    pool->start = (char *)mem + ALIGN(sizeof(pool_t));
+    pool->total_size = total_size - ALIGN(sizeof(pool_t));
+    pool->next = pools;
+    pools = pool;
+
+    block_t *block = (block_t *)pool->start;
+    block->size = pool->total_size;
+    block->next = NULL;
+    block->is_free = 1;
+    pool->free_list = block;
+
+    return 1;
+}
+
 void *allocate_slow_path(size_t size) {
     if (size == 0) {
         return NULL;
@@ -166,37 +198,6 @@ static void fill_cache(int size_class) {
     }
 }
 
-static pool_t *find_pool(void *ptr) {
-    for (pool_t *pool = pools; pool; pool = pool->next) {
-        if (ptr >= pool->start && ptr < (char *)pool->start + pool->total_size) {
-            return pool;
-        }
-    }
-    return NULL;
-}
-
-static int add_pool(size_t size) {
-    size_t total_size = ((size + sizeof(pool_t) + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
-
-    void *mem = vmalloc(NULL, total_size);
-    if (!mem) {
-        return 0;
-    }
-
-    pool_t *pool = (pool_t *)mem;
-    pool->start = (char *)mem + ALIGN(sizeof(pool_t));
-    pool->total_size = total_size - ALIGN(sizeof(pool_t));
-    pool->next = pools;
-    pools = pool;
-
-    block_t *block = (block_t *)pool->start;
-    block->size = pool->total_size;
-    block->next = NULL;
-    block->is_free = 1;
-    pool->free_list = block;
-
-    return 1;
-}
 
 void *mymalloc(size_t size) {
     if (size == 0) {
