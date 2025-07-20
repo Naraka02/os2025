@@ -9,7 +9,7 @@
 
 #define MAX_PROCESSES 32768
 #define MAX_NAME_LEN 256
-#define VERSION "1.0.0"
+#define VERSION "1.0"
 
 typedef struct process {
     pid_t pid;
