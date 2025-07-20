@@ -1,6 +1,7 @@
 #include <mymalloc.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <stdint.h>
 
 typedef struct block {
     size_t size;
