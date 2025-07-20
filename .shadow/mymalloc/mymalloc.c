@@ -49,6 +49,76 @@ static int get_size_class(size_t size) {
     return -1;
 }
 
+void *allocate_slow_path(size_t size) {
+    if (size == 0) {
+        return NULL;
+    }
+
+    spin_lock(&big_lock);
+
+    size = ALIGN(size + sizeof(block_t));
+
+    for (pool_t *pool = pools; pool; pool = pool->next) {
+        block_t **current = &pool->free_list;
+
+        while(*current) {
+            block_t *block = *current;
+
+            if (block->is_free && block->size >= size) {
+                if (block->size >= size + MIN_BLOCK_SIZE + 32) {
+                    block_t *new_block = (block_t *)((char *)block + size);
+                    new_block->size = block->size - size;
+                    new_block->next = block->next;
+                    new_block->is_free = 1;
+
+                    block->size = size;
+                    block->next = new_block;
+                }
+
+                *current = block->next;
+                block->is_free = 0;
+                block->next = NULL;
+
+                spin_unlock(&big_lock);
+                return (char *)block + sizeof(block_t);
+            }
+            current = &block->next;
+        }
+    }
+
+    size_t pool_size = size > PAGE_SIZE ? size * 2: PAGE_SIZE * 4;
+    if (!add_pool(pool_size)) {
+        spin_unlock(&big_lock);
+        return NULL;
+    }
+    
+    pool_t *new_pool = pools;
+    if (new_pool && new_pool->free_list && new_pool->free_list->size >= size) {
+        block_t *block = new_pool->free_list;
+        
+        if (block->size >= size + MIN_BLOCK_SIZE + 32) {
+            block_t *new_block = (block_t*)((char*)block + size);
+            new_block->size = block->size - size;
+            new_block->next = block->next;
+            new_block->is_free = 1;
+            
+            block->size = size;
+            new_pool->free_list = new_block;
+        } else {
+            new_pool->free_list = block->next;
+        }
+        
+        block->is_free = 0;
+        block->next = NULL;
+        
+        spin_unlock(&big_lock);
+        return (char*)block + sizeof(block_t);
+    }
+    
+    spin_unlock(&big_lock);
+    return NULL;
+}
+
 static thread_cache_t *get_thread_cache() {
     if (!tcache) {
         tcache = (thread_cache_t *)vmalloc(NULL, sizeof(thread_cache_t));
@@ -149,76 +219,6 @@ void *mymalloc(size_t size) {
     }
 
     return allocate_slow_path(size);
-}
-
-void *allocate_slow_path(size_t size) {
-    if (size == 0) {
-        return NULL;
-    }
-
-    spin_lock(&big_lock);
-
-    size = ALIGN(size + sizeof(block_t));
-
-    for (pool_t *pool = pools; pool; pool = pool->next) {
-        block_t **current = &pool->free_list;
-
-        while(*current) {
-            block_t *block = *current;
-
-            if (block->is_free && block->size >= size) {
-                if (block->size >= size + MIN_BLOCK_SIZE + 32) {
-                    block_t *new_block = (block_t *)((char *)block + size);
-                    new_block->size = block->size - size;
-                    new_block->next = block->next;
-                    new_block->is_free = 1;
-
-                    block->size = size;
-                    block->next = new_block;
-                }
-
-                *current = block->next;
-                block->is_free = 0;
-                block->next = NULL;
-
-                spin_unlock(&big_lock);
-                return (char *)block + sizeof(block_t);
-            }
-            current = &block->next;
-        }
-    }
-
-    size_t pool_size = size > PAGE_SIZE ? size * 2: PAGE_SIZE * 4;
-    if (!add_pool(pool_size)) {
-        spin_unlock(&big_lock);
-        return NULL;
-    }
-    
-    pool_t *new_pool = pools;
-    if (new_pool && new_pool->free_list && new_pool->free_list->size >= size) {
-        block_t *block = new_pool->free_list;
-        
-        if (block->size >= size + MIN_BLOCK_SIZE + 32) {
-            block_t *new_block = (block_t*)((char*)block + size);
-            new_block->size = block->size - size;
-            new_block->next = block->next;
-            new_block->is_free = 1;
-            
-            block->size = size;
-            new_pool->free_list = new_block;
-        } else {
-            new_pool->free_list = block->next;
-        }
-        
-        block->is_free = 0;
-        block->next = NULL;
-        
-        spin_unlock(&big_lock);
-        return (char*)block + sizeof(block_t);
-    }
-    
-    spin_unlock(&big_lock);
-    return NULL;
 }
 
 static int try_cache_free(void *ptr, size_t size) {
