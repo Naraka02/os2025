@@ -343,7 +343,7 @@ void cleanup_crepl() {
 
 void handle_function_definition(const char* line) {
     if (compile_and_load_function(line)) {
-        printf("Function compiled and loaded successfully.\n");
+        printf("OK.\n");
     } else {
         printf("Error: Failed to compile function.\n");
     }
@@ -352,14 +352,14 @@ void handle_function_definition(const char* line) {
 
 void handle_expression(const char* line) {
     if (strstr(line, "exit") && (strstr(line, "+") || strstr(line, "-") || strstr(line, "*") || strstr(line, "/"))) {
-        printf("Error: 'exit' is not a valid variable in expressions.\n");
+        printf("Error: Failed to evaluate expression.\n");
         fflush(stdout);
         return;
     }
 
     int result;
     if (evaluate_expression(line, &result)) {
-        printf("%d\n", result);
+        printf("= %d\n", result);
     } else {
         printf("Error: Failed to evaluate expression.\n");
     }
@@ -381,11 +381,8 @@ void process_input_line(const char* line) {
     }
 }
 
-void run_repl() {
+int main() {
     char *line;
-    
-    printf("C REPL - Enter function definitions or expressions:\n");
-    printf("Use Ctrl+D or 'exit' to quit.\n");
     
     while ((line = readline(">> ")) != NULL) {
         if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) {
@@ -397,12 +394,5 @@ void run_repl() {
         
         free(line);
     }
-}
-
-int main() {
-    // Register cleanup function
-    atexit(cleanup_crepl);
-    
-    run_repl();
     return 0;
 }
