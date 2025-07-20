@@ -6,82 +6,6 @@
 #include <testkit.h>
 #include "labyrinth.h"
 
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        printUsage();
-        return 1;
-    }
-    
-    // Handle version flag
-    if (strcmp(argv[1], "--version") == 0) {
-        if (argc != 2) {
-            return 1;
-        }
-        printf("%s\n", VERSION_INFO);
-        return 0;
-    }
-    
-    // Parse command line arguments
-    char *mapFile = NULL;
-    char playerId = '\0';
-    char *moveDirection = NULL;
-    
-    for (int i = 1; i < argc; i++) {
-        if ((strcmp(argv[i], "--map") == 0 || strcmp(argv[i], "-m") == 0) && i + 1 < argc) {
-            mapFile = argv[++i];
-        } else if ((strcmp(argv[i], "--player") == 0 || strcmp(argv[i], "-p") == 0) && i + 1 < argc) {
-            playerId = argv[++i][0];
-        } else if (strcmp(argv[i], "--move") == 0 && i + 1 < argc) {
-            moveDirection = argv[++i];
-        } else {
-            printUsage();
-            return 1;
-        }
-    }
-    
-    // Validate required arguments
-    if (!mapFile || playerId == '\0') {
-        printUsage();
-        return 1;
-    }
-    
-    if (!isValidPlayer(playerId)) {
-        return 1;
-    }
-    
-    // Load the map
-    Labyrinth labyrinth;
-    if (!loadMap(&labyrinth, mapFile)) {
-        return 1;
-    }
-    
-    // Find player position
-    Position playerPos = findPlayer(&labyrinth, playerId);
-    if (playerPos.row == -1) {
-        // Player not found, place at first empty space
-        Position emptyPos = findFirstEmptySpace(&labyrinth);
-        if (emptyPos.row == -1) {
-            return 1; // No empty space available
-        }
-        labyrinth.map[emptyPos.row][emptyPos.col] = playerId;
-        playerPos = emptyPos;
-    }
-    
-    // Handle move command
-    if (moveDirection) {
-        if (!movePlayer(&labyrinth, playerId, moveDirection)) {
-            return 1;
-        }
-    }
-    
-    // Save the map
-    if (!saveMap(&labyrinth, mapFile)) {
-        return 1;
-    }
-    
-    return 0;
-}
-
 void printUsage() {
     printf("Usage:\n");
     printf("  labyrinth --map map.txt --player id\n");
@@ -268,4 +192,80 @@ bool isConnected(Labyrinth *labyrinth) {
     }
     
     return true;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        printUsage();
+        return 1;
+    }
+    
+    // Handle version flag
+    if (strcmp(argv[1], "--version") == 0) {
+        if (argc != 2) {
+            return 1;
+        }
+        printf("%s\n", VERSION_INFO);
+        return 0;
+    }
+    
+    // Parse command line arguments
+    char *mapFile = NULL;
+    char playerId = '\0';
+    char *moveDirection = NULL;
+    
+    for (int i = 1; i < argc; i++) {
+        if ((strcmp(argv[i], "--map") == 0 || strcmp(argv[i], "-m") == 0) && i + 1 < argc) {
+            mapFile = argv[++i];
+        } else if ((strcmp(argv[i], "--player") == 0 || strcmp(argv[i], "-p") == 0) && i + 1 < argc) {
+            playerId = argv[++i][0];
+        } else if (strcmp(argv[i], "--move") == 0 && i + 1 < argc) {
+            moveDirection = argv[++i];
+        } else {
+            printUsage();
+            return 1;
+        }
+    }
+    
+    // Validate required arguments
+    if (!mapFile || playerId == '\0') {
+        printUsage();
+        return 1;
+    }
+    
+    if (!isValidPlayer(playerId)) {
+        return 1;
+    }
+    
+    // Load the map
+    Labyrinth labyrinth;
+    if (!loadMap(&labyrinth, mapFile)) {
+        return 1;
+    }
+    
+    // Find player position
+    Position playerPos = findPlayer(&labyrinth, playerId);
+    if (playerPos.row == -1) {
+        // Player not found, place at first empty space
+        Position emptyPos = findFirstEmptySpace(&labyrinth);
+        if (emptyPos.row == -1) {
+            return 1; // No empty space available
+        }
+        labyrinth.map[emptyPos.row][emptyPos.col] = playerId;
+        playerPos = emptyPos;
+    }
+    
+    // Handle move command
+    if (moveDirection) {
+        if (!movePlayer(&labyrinth, playerId, moveDirection)) {
+            return 1;
+        }
+    }
+    
+    // Save the map
+    if (!saveMap(&labyrinth, mapFile)) {
+        return 1;
+    }
+    
+    return 0;
 }
