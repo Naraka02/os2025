@@ -196,8 +196,19 @@ int main(int argc, char *argv[]) {
         }
         strace_args[argc + 1] = NULL;
         
-        execvp("strace", strace_args);
-        perror("execvp strace");
+        // Find strace executable path
+        char *strace_path = find_command("strace");
+        if (!strace_path) {
+            fprintf(stderr, "strace not found\n");
+            exit(1);
+        }
+        
+        // Get current environment
+        extern char **environ;
+        
+        execve(strace_path, strace_args, environ);
+        perror("execve strace");
+        free(strace_path);
         exit(1);
     } else {
         // Parent process: read strace output
