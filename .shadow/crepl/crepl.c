@@ -279,22 +279,28 @@ bool evaluate_expression(const char* expression, int* result) {
     bool success = false;
     ssize_t bytes_read = read(pipe_fd[0], output_buffer, sizeof(output_buffer) - 1);
     
-    // Wait for child process first to check exit status
+    // Wait for child process and check exit status
     int child_status = 0;
     if (exec_pid > 0) {
         waitpid(exec_pid, &child_status, 0);
     }
     
-    // Only process output if child exited successfully and we got valid output
+    // Only process output if child exited successfully AND we got valid output
     if (bytes_read > 0 && WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0) {
         output_buffer[bytes_read] = '\0';
-        // Trim whitespace and check if output looks like a number
+        
+        // Trim whitespace
         char *trimmed = output_buffer;
         while (*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\n') trimmed++;
         
-        // Check if the string is a valid number (starts with digit or minus)
-        if (*trimmed && (*trimmed == '-' || (*trimmed >= '0' && *trimmed <= '9'))) {
-            *result = atoi(trimmed);
+        // Check if the output is a valid number
+        char *endptr;
+        long val = strtol(trimmed, &endptr, 10);
+        
+        // Valid if we consumed the entire string (or only trailing whitespace)
+        while (*endptr == ' ' || *endptr == '\t' || *endptr == '\n') endptr++;
+        if (*endptr == '\0' && trimmed != endptr) {
+            *result = (int)val;
             success = true;
         }
     }
@@ -365,15 +371,8 @@ void process_input_line(const char* line) {
         return;
     }
     
-    // Check for exit command first, before adding to history
-    if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) {
-        return; // Don't process as expression
-    }
-    
-    // Add to history for readline
     add_history(line);
     
-    // Check if it's a function definition or expression
     if (is_function_definition(line)) {
         handle_function_definition(line);
     } else {
