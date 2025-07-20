@@ -15,6 +15,7 @@
 // Track loaded functions and shared libraries
 static char *loaded_functions[MAX_FUNCTIONS];
 static void *loaded_libs[MAX_FUNCTIONS];
+static char *loaded_so_files[MAX_FUNCTIONS];  // Store .so file paths
 static int function_count = 0;
 
 // Compile a function definition and load it
@@ -93,6 +94,7 @@ bool compile_and_load_function(const char* function_def) {
         
         loaded_functions[function_count] = func_decl;
         loaded_libs[function_count] = lib_handle;
+        loaded_so_files[function_count] = strdup(temp_so_file);  // Store .so file path
         function_count++;
     }
     
@@ -126,10 +128,27 @@ bool evaluate_expression(const char* expression, int* result) {
     fprintf(c_file, "#include <string.h>\n");
     fprintf(c_file, "#include <math.h>\n\n");
     
-    // Add declarations for previously loaded functions
+    // Add function definitions (not just declarations) for previously loaded functions
     for (int i = 0; i < function_count; i++) {
         if (loaded_functions[i]) {
-            fprintf(c_file, "%s\n", loaded_functions[i]);
+            // Convert declaration back to a stub function
+            char *func_decl = strdup(loaded_functions[i]);
+            char *semicolon = strrchr(func_decl, ';');
+            if (semicolon) {
+                *semicolon = '\0';
+                // Extract function name for a simple stub
+                char *func_name = strrchr(func_decl, ' ');
+                if (func_name) {
+                    func_name++;
+                    char *paren = strchr(func_name, '(');
+                    if (paren) {
+                        *paren = '\0';
+                        fprintf(c_file, "extern int %s();\n", func_name);
+                        *paren = '(';
+                    }
+                }
+            }
+            free(func_decl);
         }
     }
     
@@ -141,11 +160,20 @@ bool evaluate_expression(const char* expression, int* result) {
     fprintf(c_file, "}\n");
     fclose(c_file);
     
+    // Build linking arguments for all loaded shared libraries
+    char link_args[2048] = "";
+    for (int i = 0; i < function_count; i++) {
+        if (loaded_so_files[i] && access(loaded_so_files[i], F_OK) == 0) {
+            strcat(link_args, " ");
+            strcat(link_args, loaded_so_files[i]);
+        }
+    }
+    
     // Compile the program
-    char compile_cmd[1024];
+    char compile_cmd[2048];
     snprintf(compile_cmd, sizeof(compile_cmd), 
-             "gcc -o %s %s -ldl -lm 2>/dev/null", 
-             temp_exe_file, temp_c_file);
+             "gcc -o %s %s %s -ldl -lm 2>/dev/null", 
+             temp_exe_file, temp_c_file, link_args);
     
     int compile_result = system(compile_cmd);
     
@@ -212,6 +240,10 @@ void cleanup_crepl() {
         }
         if (loaded_libs[i]) {
             dlclose(loaded_libs[i]);
+        }
+        if (loaded_so_files[i]) {
+            unlink(loaded_so_files[i]);  // Clean up .so files
+            free(loaded_so_files[i]);
         }
     }
 }
