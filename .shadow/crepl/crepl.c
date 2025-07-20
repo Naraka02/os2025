@@ -167,24 +167,8 @@ bool evaluate_expression(const char* expression, int* result) {
     
     for (int i = 0; i < function_count; i++) {
         if (loaded_functions[i]) {
-            // Convert declaration back to a stub function
-            char *func_decl = strdup(loaded_functions[i]);
-            char *semicolon = strrchr(func_decl, ';');
-            if (semicolon) {
-                *semicolon = '\0';
-                // Extract function name for a simple stub
-                char *func_name = strrchr(func_decl, ' ');
-                if (func_name) {
-                    func_name++;
-                    char *paren = strchr(func_name, '(');
-                    if (paren) {
-                        *paren = '\0';
-                        fprintf(c_file, "extern int %s();\n", func_name);
-                        *paren = '(';
-                    }
-                }
-            }
-            free(func_decl);
+            // Just add the full function declaration, not extern
+            fprintf(c_file, "%s;\n", loaded_functions[i]);
         }
     }
     
@@ -346,7 +330,7 @@ void handle_expression(const char* line) {
         fflush(stdout);
         return;
     }
-    
+
     int result;
     if (evaluate_expression(line, &result)) {
         printf("%d\n", result);
