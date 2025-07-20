@@ -356,6 +356,13 @@ void handle_function_definition(const char* line) {
 }
 
 void handle_expression(const char* line) {
+    // Check for potentially problematic expressions
+    if (strstr(line, "exit") && (strstr(line, "+") || strstr(line, "-") || strstr(line, "*") || strstr(line, "/"))) {
+        printf("Error: 'exit' is not a valid variable in expressions.\n");
+        fflush(stdout);
+        return;
+    }
+    
     int result;
     if (evaluate_expression(line, &result)) {
         printf("%d\n", result);
