@@ -2,6 +2,25 @@
 
 #ifdef FREESTANDING
 
+#define MEM_SIZE 4096
+
+static char memory[MEM_SIZE];
+
+void *vmalloc(void *addr, size_t length) {
+    if (length > MEM_SIZE || length == 0) {
+        return NULL;
+    }
+    if (addr == NULL) {
+        return memory;
+    }
+    return NULL;
+}
+
+void vmfree(void *addr, size_t length) {
+    (void)addr;
+    (void)length;  // Suppress unused parameter warning
+}
+
 // This checks whether your code works for
 // freestanding environments.
 
