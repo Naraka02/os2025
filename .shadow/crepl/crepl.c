@@ -351,12 +351,6 @@ void handle_function_definition(const char* line) {
 }
 
 void handle_expression(const char* line) {
-    if (strstr(line, "exit") && (strstr(line, "+") || strstr(line, "-") || strstr(line, "*") || strstr(line, "/"))) {
-        printf("Error: Failed to evaluate expression.\n");
-        fflush(stdout);
-        return;
-    }
-
     int result;
     if (evaluate_expression(line, &result)) {
         printf("= %d\n", result);
@@ -385,11 +379,7 @@ int main() {
     char *line;
     
     while ((line = readline(">> ")) != NULL) {
-        if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) {
-            free(line);
-            break;
-        }
-        
+    
         process_input_line(line);
         
         free(line);
