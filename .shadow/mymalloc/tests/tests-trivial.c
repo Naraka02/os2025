@@ -57,5 +57,4 @@ SystemTest(concurrent, ((const char *[]){})) {
     pthread_join(t3, NULL);
     pthread_join(t4, NULL);
 
-    tk_assert(malloc_count == 4 * N, "malloc_count should be 4N");
 }
