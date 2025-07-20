@@ -43,8 +43,6 @@ void T_malloc() {
 }
 
 SystemTest(concurrent, ((const char *[]){})) {
-    // We don't need this malloc_count; you can safely remove this test case.
-    extern long malloc_count;
     pthread_t t1, t2, t3, t4;
 
     pthread_create(&t1, NULL, (void *(*)(void *))T_malloc, NULL);
@@ -56,5 +54,4 @@ SystemTest(concurrent, ((const char *[]){})) {
     pthread_join(t2, NULL);
     pthread_join(t3, NULL);
     pthread_join(t4, NULL);
-
 }
