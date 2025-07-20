@@ -108,7 +108,7 @@ void print_top_syscalls(syscall_stats *stats, int n) {
     
     // Print 80 null characters as delimiter
     for (int i = 0; i < 80; i++) {
-        printf("\0");
+        putchar('\0');
     }
 }
 
