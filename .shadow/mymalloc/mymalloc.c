@@ -1,5 +1,6 @@
 #include <mymalloc.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 typedef struct block {
     size_t size;
@@ -23,10 +24,10 @@ typedef struct thread_cache {
 #define ALIGN(size) (((size) + 7) & ~7)
 #define MIN_BLOCK_SIZE (sizeof(block_t))
 #define PAGE_SIZE 4096
-#define MAX_THREAD_CACHE_SIZE (PAGE_SIZE * 16)  // 线程本地缓存最大大小
+#define MAX_THREAD_CACHE_SIZE (PAGE_SIZE * 16)
 
 static thread_cache_t *thread_caches = NULL;
-static pool_t *global_pools = NULL;  // 全局池用于大块分配
+static pool_t *global_pools = NULL;
 spinlock_t big_lock = {UNLOCKED};
 
 static inline pid_t gettid(void) {
@@ -40,21 +41,17 @@ static inline pid_t gettid(void) {
     return tid;
 }
 
-// 查找或创建当前线程的缓存
 static thread_cache_t *get_thread_cache(void) {
     pid_t current_tid = gettid();
     
-    // 先在无锁情况下快速查找
     for (thread_cache_t *cache = thread_caches; cache; cache = cache->next) {
         if (cache->tid == current_tid) {
             return cache;
         }
     }
     
-    // 需要创建新的线程缓存，获取锁
     spin_lock(&big_lock);
-    
-    // 再次检查，可能在等待锁期间其他线程已创建
+
     for (thread_cache_t *cache = thread_caches; cache; cache = cache->next) {
         if (cache->tid == current_tid) {
             spin_unlock(&big_lock);
@@ -62,7 +59,6 @@ static thread_cache_t *get_thread_cache(void) {
         }
     }
     
-    // 创建新的线程缓存
     thread_cache_t *new_cache = (thread_cache_t *)vmalloc(NULL, PAGE_SIZE);
     if (!new_cache) {
         spin_unlock(&big_lock);
