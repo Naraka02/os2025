@@ -67,7 +67,7 @@ bool compile_and_load_function(const char* function_def) {
     fprintf(c_file, "\n%s\n", function_def);
     fclose(c_file);
     
-    // Compile to shared library using fork/exec instead of system
+    // Compile to shared library
     pid_t pid = fork();
     if (pid == 0) {
         // Child process: execute gcc
@@ -196,11 +196,10 @@ bool evaluate_expression(const char* expression, int* result) {
     fprintf(c_file, "}\n");
     fclose(c_file);
     
-    // Compile the program using fork/exec instead of system
+    // Compile the program
     pid_t pid = fork();
     if (pid == 0) {
         // Child process: execute gcc
-        // Count arguments: gcc -o output input [libs...] -ldl -lm
         int arg_count = 5; // gcc, -o, output, input, NULL
         for (int i = 0; i < function_count; i++) {
             if (loaded_so_files[i] && access(loaded_so_files[i], F_OK) == 0) {
@@ -254,24 +253,44 @@ bool evaluate_expression(const char* expression, int* result) {
         return false;
     }
     
-    // Execute the program and capture output
-    char exec_cmd[512];
-    snprintf(exec_cmd, sizeof(exec_cmd), "%s", temp_exe_file);
-    
-    FILE *output = popen(exec_cmd, "r");
-    if (!output) {
+    // Execute the program and capture output using fork/exec/pipe
+    int pipe_fd[2];
+    if (pipe(pipe_fd) == -1) {
         unlink(temp_exe_file);
         return false;
     }
     
+    pid_t exec_pid = fork();
+    if (exec_pid == 0) {
+        // Child process: execute the compiled program
+        close(pipe_fd[0]); // Close read end
+        dup2(pipe_fd[1], STDOUT_FILENO); // Redirect stdout to pipe
+        close(pipe_fd[1]);
+        
+        char *args[] = {temp_exe_file, NULL};
+        execvp(temp_exe_file, args);
+        exit(1); // If execvp fails
+    }
+    
+    // Parent process: read from pipe
+    close(pipe_fd[1]); // Close write end
+    
     char output_buffer[256];
     bool success = false;
-    if (fgets(output_buffer, sizeof(output_buffer), output)) {
+    ssize_t bytes_read = read(pipe_fd[0], output_buffer, sizeof(output_buffer) - 1);
+    if (bytes_read > 0) {
+        output_buffer[bytes_read] = '\0';
         *result = atoi(output_buffer);
         success = true;
     }
     
-    pclose(output);
+    close(pipe_fd[0]);
+    
+    // Wait for child process
+    if (exec_pid > 0) {
+        int status;
+        waitpid(exec_pid, &status, 0);
+    }
     unlink(temp_exe_file);
     
     return success;
