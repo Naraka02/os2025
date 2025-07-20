@@ -18,7 +18,7 @@ void *vmalloc(void *addr, size_t length) {
 
 void vmfree(void *addr, size_t length) {
     (void)addr;
-    (void)length;  // Suppress unused parameter warning
+    (void)length;
 }
 
 // This checks whether your code works for
