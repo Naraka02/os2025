@@ -371,7 +371,7 @@ void run_repl() {
     printf("C REPL - Enter function definitions or expressions:\n");
     printf("Use Ctrl+D or 'exit' to quit.\n");
     
-    while ((line = readline("> ")) != NULL) {
+    while ((line = readline(">> ")) != NULL) {
         if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) {
             free(line);
             break;
@@ -388,7 +388,5 @@ int main() {
     atexit(cleanup_crepl);
     
     run_repl();
-    
-    printf("\nGoodbye!\n");
     return 0;
 }
