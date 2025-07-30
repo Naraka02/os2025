@@ -15,7 +15,7 @@
 typedef struct {
     void *start;
     size_t size;
-    uint64_t bitmap[POOL_SIZE / 64];  // 1 bit per block (max 1MB/8 = 131072 blocks = 2048 bits = 32 uint64_t)
+    uint64_t *bitmap;  // dynamically allocated, sized per pool
     int free_count;
     int total_blocks;
 } fast_pool_t;
@@ -65,6 +65,7 @@ static void init_fast_pool(fast_pool_t *pool, size_t block_size) {
     pool->size = block_size;
     pool->total_blocks = POOL_SIZE / block_size;
     pool->free_count = pool->total_blocks;
+    pool->bitmap = NULL;
     
     // Allocate the pool
     pool->start = vmalloc(NULL, POOL_SIZE);
@@ -74,10 +75,18 @@ static void init_fast_pool(fast_pool_t *pool, size_t block_size) {
         return;
     }
     
-    // Initialize bitmap (all blocks free)
-    int bitmap_size = (pool->total_blocks + 63) / 64;  // Round up to nearest uint64_t
+    // Allocate bitmap
+    int bitmap_size = (pool->total_blocks + 63) / 64;
+    pool->bitmap = (uint64_t*)vmalloc(NULL, bitmap_size * sizeof(uint64_t));
+    if (!pool->bitmap) {
+        vmfree(pool->start, POOL_SIZE);
+        pool->start = NULL;
+        pool->total_blocks = 0;
+        pool->free_count = 0;
+        return;
+    }
     for (int i = 0; i < bitmap_size; i++) {
-        pool->bitmap[i] = 0;  // All bits 0 = all blocks free
+        pool->bitmap[i] = 0;
     }
 }
 
@@ -85,9 +94,9 @@ static void init_fast_pool(fast_pool_t *pool, size_t block_size) {
 static int find_free_block(fast_pool_t *pool) {
     if (pool->free_count == 0) return -1;
     
-    int bitmap_size = (pool->total_blocks + 63) / 64;  // Round up to nearest uint64_t
+    int bitmap_size = (pool->total_blocks + 63) / 64;
     for (int i = 0; i < bitmap_size; i++) {
-        if (pool->bitmap[i] != 0xFFFFFFFFFFFFFFFFULL) {  // Not all bits set
+        if (pool->bitmap[i] != 0xFFFFFFFFFFFFFFFFULL) {
             uint64_t word = pool->bitmap[i];
             for (int j = 0; j < 64; j++) {
                 int block_idx = i * 64 + j;
@@ -118,6 +127,7 @@ static void *alloc_from_pool(fast_pool_t *pool) {
 static void free_in_pool(fast_pool_t *pool, void *ptr) {
     size_t offset = (char*)ptr - (char*)pool->start;
     int block_idx = offset / pool->size;
+    int bitmap_size = (pool->total_blocks + 63) / 64;
     
     if (block_idx >= 0 && block_idx < pool->total_blocks) {
         int word_idx = block_idx / 64;
