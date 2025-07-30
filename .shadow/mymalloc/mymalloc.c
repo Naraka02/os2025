@@ -17,6 +17,7 @@ typedef struct {
     uint64_t *bitmap;
     int free_count;
     int total_blocks;
+    spinlock_t lock;
 } fast_pool_t;
 
 typedef struct thread_cache_t {
@@ -61,6 +62,7 @@ static void init_fast_pool(fast_pool_t *pool, size_t block_size) {
     pool->total_blocks = POOL_SIZE / block_size;
     pool->free_count = pool->total_blocks;
     pool->bitmap = NULL;
+    pool->lock = (spinlock_t){UNLOCKED};
     
     pool->start = vmalloc(NULL, POOL_SIZE);
     if (!pool->start) {
@@ -102,18 +104,24 @@ static int find_free_block(fast_pool_t *pool) {
 }
 
 static void *alloc_from_pool(fast_pool_t *pool) {
+    spin_lock(&pool->lock);
     int block_idx = find_free_block(pool);
-    if (block_idx == -1) return NULL;
+    if (block_idx == -1) {
+        spin_unlock(&pool->lock);
+        return NULL;
+    }
     
     int word_idx = block_idx / 64;
     int bit_idx = block_idx % 64;
     pool->bitmap[word_idx] |= (1ULL << bit_idx);
     pool->free_count--;
     
+    spin_unlock(&pool->lock);
     return (char*)pool->start + block_idx * pool->size;
 }
 
 static void free_in_pool(fast_pool_t *pool, void *ptr) {
+    spin_lock(&pool->lock);
     size_t offset = (char*)ptr - (char*)pool->start;
     int block_idx = offset / pool->size;
     
@@ -123,6 +131,7 @@ static void free_in_pool(fast_pool_t *pool, void *ptr) {
         pool->bitmap[word_idx] &= ~(1ULL << bit_idx);
         pool->free_count++;
     }
+    spin_unlock(&pool->lock);
 }
 
 static thread_cache_t *get_thread_cache(void) {
