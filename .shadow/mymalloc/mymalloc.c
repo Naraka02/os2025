@@ -24,7 +24,7 @@ typedef struct {
     pid_t tid;
     fast_pool_t pools[NUM_POOLS][BLOCK_SIZES];  // pools for different size classes
     int pool_counts[BLOCK_SIZES];
-    struct thread_cache *next;
+    struct thread_cache_t *next;
 } thread_cache_t;
 
 // Size classes for ultra-fast allocation
@@ -127,7 +127,6 @@ static void *alloc_from_pool(fast_pool_t *pool) {
 static void free_in_pool(fast_pool_t *pool, void *ptr) {
     size_t offset = (char*)ptr - (char*)pool->start;
     int block_idx = offset / pool->size;
-    int bitmap_size = (pool->total_blocks + 63) / 64;
     
     if (block_idx >= 0 && block_idx < pool->total_blocks) {
         int word_idx = block_idx / 64;
