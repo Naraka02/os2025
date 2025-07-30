@@ -6,7 +6,6 @@
 #endif
 #include <unistd.h>
 
-// Ultra-fast allocation using pre-allocated pools and bitmaps
 #define POOL_SIZE (1024 * 1024)  // 1MB pools
 #define NUM_POOLS 16
 #define BLOCK_SIZES 8
@@ -15,19 +14,18 @@
 typedef struct {
     void *start;
     size_t size;
-    uint64_t *bitmap;  // dynamically allocated, sized per pool
+    uint64_t *bitmap;
     int free_count;
     int total_blocks;
 } fast_pool_t;
 
 typedef struct {
     pid_t tid;
-    fast_pool_t pools[NUM_POOLS][BLOCK_SIZES];  // pools for different size classes
+    fast_pool_t pools[NUM_POOLS][BLOCK_SIZES];
     int pool_counts[BLOCK_SIZES];
-    struct thread_cache_t *next;
+    struct thread_cache *next;
 } thread_cache_t;
 
-// Size classes for ultra-fast allocation
 static const size_t block_sizes[BLOCK_SIZES] = {8, 16, 32, 64, 128, 256, 512, 1024};
 
 #define ALIGN(size) (((size) + 7) & ~7)
@@ -36,7 +34,6 @@ static const size_t block_sizes[BLOCK_SIZES] = {8, 16, 32, 64, 128, 256, 512, 10
 static thread_cache_t *thread_caches = NULL;
 spinlock_t big_lock = {UNLOCKED};
 
-// Thread-local storage for instant access
 static __thread thread_cache_t *current_cache = NULL;
 
 static inline pid_t gettid(void) {
@@ -50,24 +47,21 @@ static inline pid_t gettid(void) {
     return tid;
 }
 
-// Find size class for allocation
 static inline int get_size_class(size_t size) {
     for (int i = 0; i < BLOCK_SIZES; i++) {
         if (size <= block_sizes[i]) {
             return i;
         }
     }
-    return -1;  // Too large for fast allocation
+    return -1;
 }
 
-// Initialize a fast pool
 static void init_fast_pool(fast_pool_t *pool, size_t block_size) {
     pool->size = block_size;
     pool->total_blocks = POOL_SIZE / block_size;
     pool->free_count = pool->total_blocks;
     pool->bitmap = NULL;
     
-    // Allocate the pool
     pool->start = vmalloc(NULL, POOL_SIZE);
     if (!pool->start) {
         pool->total_blocks = 0;
@@ -75,7 +69,6 @@ static void init_fast_pool(fast_pool_t *pool, size_t block_size) {
         return;
     }
     
-    // Allocate bitmap
     int bitmap_size = (pool->total_blocks + 63) / 64;
     pool->bitmap = (uint64_t*)vmalloc(NULL, bitmap_size * sizeof(uint64_t));
     if (!pool->bitmap) {
@@ -90,7 +83,6 @@ static void init_fast_pool(fast_pool_t *pool, size_t block_size) {
     }
 }
 
-// Find first free block in bitmap
 static int find_free_block(fast_pool_t *pool) {
     if (pool->free_count == 0) return -1;
     
