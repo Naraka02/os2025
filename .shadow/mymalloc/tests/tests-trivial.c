@@ -49,6 +49,7 @@ SystemTest(concurrent, ((const char *[]){})) {
     pthread_create(&t2, NULL, (void *(*)(void *))T_malloc, NULL);
     pthread_create(&t3, NULL, (void *(*)(void *))T_malloc, NULL);
     pthread_create(&t4, NULL, (void *(*)(void *))T_malloc, NULL);
+
     
     pthread_join(t1, NULL);
     pthread_join(t2, NULL);

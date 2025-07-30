@@ -6,7 +6,7 @@
 #endif
 #include <unistd.h>
 
-#define POOL_SIZE (1024 * 1024)  // 1MB pools
+#define POOL_SIZE (1024 * 1024)
 #define NUM_POOLS 16
 #define BLOCK_SIZES 8
 #define MAX_SMALL_SIZE 512
