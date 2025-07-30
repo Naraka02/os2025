@@ -132,13 +132,6 @@ static thread_cache_t *get_thread_cache(void) {
     
     pid_t current_tid = gettid();
     
-    for (thread_cache_t *cache = thread_caches; cache; cache = cache->next) {
-        if (cache->tid == current_tid) {
-            current_cache = cache;
-            return cache;
-        }
-    }
-    
     spin_lock(&big_lock);
 
     for (thread_cache_t *cache = thread_caches; cache; cache = cache->next) {
