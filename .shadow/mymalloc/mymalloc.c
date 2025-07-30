@@ -23,7 +23,7 @@ typedef struct thread_cache_t {
     pid_t tid;
     fast_pool_t pools[NUM_POOLS][BLOCK_SIZES];
     int pool_counts[BLOCK_SIZES];
-    struct thread_cache *next;
+    struct thread_cache_t *next;
 } thread_cache_t;
 
 static const size_t block_sizes[BLOCK_SIZES] = {8, 16, 32, 64, 128, 256, 512, 1024};
