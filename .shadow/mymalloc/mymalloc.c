@@ -205,10 +205,10 @@ void *mymalloc(size_t size) {
             if (cache->pool_counts[size_class] < NUM_POOLS) {
                 int new_pool_idx = cache->pool_counts[size_class];
                 init_fast_pool(&cache->pools[new_pool_idx][size_class], block_sizes[size_class]);
-                cache->pool_counts[size_class]++;
                 
                 fast_pool_t *new_pool = &cache->pools[new_pool_idx][size_class];
                 if (new_pool->total_blocks > 0) {
+                    cache->pool_counts[size_class]++;
                     return alloc_from_pool(new_pool);
                 }
             }
