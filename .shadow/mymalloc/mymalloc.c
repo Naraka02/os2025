@@ -15,7 +15,7 @@
 typedef struct {
     void *start;
     size_t size;
-    uint64_t bitmap[POOL_SIZE / 64 / 8];  // 1 bit per 8-byte block
+    uint64_t bitmap[POOL_SIZE / 64];  // 1 bit per block (max 1MB/8 = 131072 blocks = 2048 bits = 32 uint64_t)
     int free_count;
     int total_blocks;
 } fast_pool_t;
@@ -75,7 +75,8 @@ static void init_fast_pool(fast_pool_t *pool, size_t block_size) {
     }
     
     // Initialize bitmap (all blocks free)
-    for (int i = 0; i < POOL_SIZE / 64 / 8; i++) {
+    int bitmap_size = (pool->total_blocks + 63) / 64;  // Round up to nearest uint64_t
+    for (int i = 0; i < bitmap_size; i++) {
         pool->bitmap[i] = 0;  // All bits 0 = all blocks free
     }
 }
@@ -84,12 +85,14 @@ static void init_fast_pool(fast_pool_t *pool, size_t block_size) {
 static int find_free_block(fast_pool_t *pool) {
     if (pool->free_count == 0) return -1;
     
-    for (int i = 0; i < POOL_SIZE / 64 / 8; i++) {
+    int bitmap_size = (pool->total_blocks + 63) / 64;  // Round up to nearest uint64_t
+    for (int i = 0; i < bitmap_size; i++) {
         if (pool->bitmap[i] != 0xFFFFFFFFFFFFFFFFULL) {  // Not all bits set
             uint64_t word = pool->bitmap[i];
             for (int j = 0; j < 64; j++) {
-                if (!(word & (1ULL << j))) {
-                    return i * 64 + j;
+                int block_idx = i * 64 + j;
+                if (block_idx < pool->total_blocks && !(word & (1ULL << j))) {
+                    return block_idx;
                 }
             }
         }
