@@ -176,8 +176,14 @@ static fast_pool_t *find_pool_for_ptr(thread_cache_t *cache, void *ptr) {
     for (int size_class = 0; size_class < BLOCK_SIZES; size_class++) {
         for (int pool_idx = 0; pool_idx < cache->pool_counts[size_class]; pool_idx++) {
             fast_pool_t *pool = &cache->pools[pool_idx][size_class];
-            if ((char*)ptr >= (char*)pool->start && (char*)ptr < (char*)pool->start + POOL_SIZE) {
-                return pool;
+            if (pool->start && (char*)ptr >= (char*)pool->start && (char*)ptr < (char*)pool->start + POOL_SIZE) {
+                size_t offset = (char*)ptr - (char*)pool->start;
+                if (offset % pool->size == 0) {
+                    int block_idx = offset / pool->size;
+                    if (block_idx < pool->total_blocks) {
+                        return pool;
+                    }
+                }
             }
         }
     }
