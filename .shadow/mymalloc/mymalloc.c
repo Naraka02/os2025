@@ -101,12 +101,10 @@ static int find_free_block(fast_pool_t *pool) {
     return -1;
 }
 
-// Allocate block from fast pool
 static void *alloc_from_pool(fast_pool_t *pool) {
     int block_idx = find_free_block(pool);
     if (block_idx == -1) return NULL;
     
-    // Mark block as allocated
     int word_idx = block_idx / 64;
     int bit_idx = block_idx % 64;
     pool->bitmap[word_idx] |= (1ULL << bit_idx);
@@ -115,7 +113,6 @@ static void *alloc_from_pool(fast_pool_t *pool) {
     return (char*)pool->start + block_idx * pool->size;
 }
 
-// Free block in fast pool
 static void free_in_pool(fast_pool_t *pool, void *ptr) {
     size_t offset = (char*)ptr - (char*)pool->start;
     int block_idx = offset / pool->size;
@@ -129,14 +126,12 @@ static void free_in_pool(fast_pool_t *pool, void *ptr) {
 }
 
 static thread_cache_t *get_thread_cache(void) {
-    // Ultra-fast path: use thread-local cache
     if (current_cache) {
         return current_cache;
     }
     
     pid_t current_tid = gettid();
     
-    // Check global cache first
     for (thread_cache_t *cache = thread_caches; cache; cache = cache->next) {
         if (cache->tid == current_tid) {
             current_cache = cache;
@@ -146,7 +141,6 @@ static thread_cache_t *get_thread_cache(void) {
     
     spin_lock(&big_lock);
 
-    // Double-check after acquiring lock
     for (thread_cache_t *cache = thread_caches; cache; cache = cache->next) {
         if (cache->tid == current_tid) {
             current_cache = cache;
@@ -154,8 +148,7 @@ static thread_cache_t *get_thread_cache(void) {
             return cache;
         }
     }
-    
-    // Create new cache with pre-allocated pools
+
     thread_cache_t *new_cache = (thread_cache_t *)vmalloc(NULL, sizeof(thread_cache_t));
     if (!new_cache) {
         spin_unlock(&big_lock);
@@ -164,10 +157,9 @@ static thread_cache_t *get_thread_cache(void) {
     
     new_cache->tid = current_tid;
     new_cache->next = thread_caches;
-    
-    // Initialize all pools for all size classes
+
     for (int size_class = 0; size_class < BLOCK_SIZES; size_class++) {
-        new_cache->pool_counts[size_class] = 1;  // Start with one pool per size class
+        new_cache->pool_counts[size_class] = 1;
         init_fast_pool(&new_cache->pools[0][size_class], block_sizes[size_class]);
     }
     
@@ -177,12 +169,11 @@ static thread_cache_t *get_thread_cache(void) {
     return new_cache;
 }
 
-// Find which pool contains a pointer
 static fast_pool_t *find_pool_for_ptr(thread_cache_t *cache, void *ptr) {
     for (int size_class = 0; size_class < BLOCK_SIZES; size_class++) {
         for (int pool_idx = 0; pool_idx < cache->pool_counts[size_class]; pool_idx++) {
             fast_pool_t *pool = &cache->pools[pool_idx][size_class];
-            if (ptr >= pool->start && ptr < (char*)pool->start + POOL_SIZE) {
+            if ((char*)ptr >= (char*)pool->start && (char*)ptr < (char*)pool->start + POOL_SIZE) {
                 return pool;
             }
         }
@@ -196,13 +187,11 @@ void *mymalloc(size_t size) {
     }
 
     size = ALIGN(size);
-    
-    // Ultra-fast path for small allocations
+
     int size_class = get_size_class(size);
     if (size_class >= 0) {
         thread_cache_t *cache = get_thread_cache();
         if (cache) {
-            // Try existing pools
             for (int pool_idx = 0; pool_idx < cache->pool_counts[size_class]; pool_idx++) {
                 fast_pool_t *pool = &cache->pools[pool_idx][size_class];
                 if (pool->free_count > 0) {
@@ -213,7 +202,6 @@ void *mymalloc(size_t size) {
                 }
             }
             
-            // Add new pool if needed
             if (cache->pool_counts[size_class] < NUM_POOLS) {
                 int new_pool_idx = cache->pool_counts[size_class];
                 init_fast_pool(&cache->pools[new_pool_idx][size_class], block_sizes[size_class]);
@@ -227,7 +215,6 @@ void *mymalloc(size_t size) {
         }
     }
     
-    // Fallback for large allocations - use direct vmalloc
     return vmalloc(NULL, size);
 }
 
@@ -244,7 +231,6 @@ void myfree(void *ptr) {
             return;
         }
     }
-    
-    // Fallback for large allocations
-    vmfree(ptr, 0);  // Size unknown, but vmfree should handle it
+
+    vmfree(ptr, 0);
 }
