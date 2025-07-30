@@ -212,7 +212,20 @@ void *mymalloc(size_t size) {
                     }
                 }
             }
-            
+
+            spin_lock(&cache->size_class_locks[size_class]);
+
+            for (int pool_idx = 0; pool_idx < cache->pool_counts[size_class]; pool_idx++) {
+                fast_pool_t *pool = &cache->pools[pool_idx][size_class];
+                if (pool->free_count > 0) {
+                    void *result = alloc_from_pool(pool);
+                    if (result) {
+                        spin_unlock(&cache->size_class_locks[size_class]);
+                        return result;
+                    }
+                }
+            }
+
             if (cache->pool_counts[size_class] < NUM_POOLS) {
                 int new_pool_idx = cache->pool_counts[size_class];
                 init_fast_pool(&cache->pools[new_pool_idx][size_class], block_sizes[size_class]);
@@ -220,9 +233,12 @@ void *mymalloc(size_t size) {
                 fast_pool_t *new_pool = &cache->pools[new_pool_idx][size_class];
                 if (new_pool->total_blocks > 0) {
                     cache->pool_counts[size_class]++;
+                    spin_unlock(&cache->size_class_locks[size_class]);
                     return alloc_from_pool(new_pool);
                 }
             }
+            
+            spin_unlock(&cache->size_class_locks[size_class]);
         }
     }
     
