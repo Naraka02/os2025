@@ -34,6 +34,7 @@ static const size_t block_sizes[BLOCK_SIZES] = {8, 16, 32, 64, 128, 256, 512, 10
 
 static thread_cache_t *thread_caches = NULL;
 spinlock_t big_lock = {UNLOCKED};
+static spinlock_t cache_list_lock = {UNLOCKED};
 
 static __thread thread_cache_t *current_cache = NULL;
 
@@ -141,19 +142,19 @@ static thread_cache_t *get_thread_cache(void) {
     
     pid_t current_tid = gettid();
     
-    spin_lock(&big_lock);
+    spin_lock(&cache_list_lock);
 
     for (thread_cache_t *cache = thread_caches; cache; cache = cache->next) {
         if (cache->tid == current_tid) {
             current_cache = cache;
-            spin_unlock(&big_lock);
+            spin_unlock(&cache_list_lock);
             return cache;
         }
     }
 
     thread_cache_t *new_cache = (thread_cache_t *)vmalloc(NULL, sizeof(thread_cache_t));
     if (!new_cache) {
-        spin_unlock(&big_lock);
+        spin_unlock(&cache_list_lock);
         return NULL;
     }
     
@@ -170,7 +171,7 @@ static thread_cache_t *get_thread_cache(void) {
     
     thread_caches = new_cache;
     current_cache = new_cache;
-    spin_unlock(&big_lock);
+    spin_unlock(&cache_list_lock);
     return new_cache;
 }
 
