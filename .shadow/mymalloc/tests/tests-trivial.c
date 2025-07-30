@@ -38,22 +38,69 @@ SystemTest(vmalloc, ((const char *[]){})) {
 #define N 100000
 void T_malloc() {
     for (int i = 0; i < N; i++) {
-        mymalloc(0);
+        void* p = mymalloc(8);
+        if (p) {
+            myfree(p);
+        }
     }
 }
 
 SystemTest(concurrent, ((const char *[]){})) {
     pthread_t t1, t2, t3, t4;
-
     pthread_create(&t1, NULL, (void *(*)(void *))T_malloc, NULL);
     pthread_create(&t2, NULL, (void *(*)(void *))T_malloc, NULL);
     pthread_create(&t3, NULL, (void *(*)(void *))T_malloc, NULL);
     pthread_create(&t4, NULL, (void *(*)(void *))T_malloc, NULL);
-
-    
     
     pthread_join(t1, NULL);
     pthread_join(t2, NULL);
     pthread_join(t3, NULL);
     pthread_join(t4, NULL);
+}
+
+#define N_THREADS 8
+#define ALLOC_SIZE 16
+
+typedef struct {
+    int thread_id;
+    void *ptr;
+} thread_data_t;
+
+void *T_alloc_and_check(void *arg) {
+    thread_data_t *data = (thread_data_t *)arg;
+    data->ptr = mymalloc(ALLOC_SIZE);
+    if (data->ptr) {
+        *(int *)(data->ptr) = data->thread_id;
+        usleep(100); 
+        tk_assert(*(int *)(data->ptr) == data->thread_id, "Memory corruption detected: thread %d", data->thread_id);
+    }
+    return NULL;
+}
+
+SystemTest(double_allocation_test, ((const char *[]){})) {
+    pthread_t threads[N_THREADS];
+    thread_data_t thread_data[N_THREADS];
+
+    for (int i = 0; i < N_THREADS; i++) {
+        thread_data[i].thread_id = i;
+        thread_data[i].ptr = NULL;
+        pthread_create(&threads[i], NULL, T_alloc_and_check, &thread_data[i]);
+    }
+
+    for (int i = 0; i < N_THREADS; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    for (int i = 0; i < N_THREADS; i++) {
+        tk_assert(thread_data[i].ptr != NULL, "Thread %d failed to allocate memory", i);
+        for (int j = i + 1; j < N_THREADS; j++) {
+            tk_assert(thread_data[i].ptr != thread_data[j].ptr, "Double allocation detected: thread %d and %d have the same pointer", i, j);
+        }
+    }
+
+    for (int i = 0; i < N_THREADS; i++) {
+        if (thread_data[i].ptr) {
+            myfree(thread_data[i].ptr);
+        }
+    }
 }
