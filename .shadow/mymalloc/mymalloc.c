@@ -159,8 +159,11 @@ static thread_cache_t *get_thread_cache(void) {
     new_cache->next = thread_caches;
 
     for (int size_class = 0; size_class < BLOCK_SIZES; size_class++) {
-        new_cache->pool_counts[size_class] = 1;
+        new_cache->pool_counts[size_class] = 0;
         init_fast_pool(&new_cache->pools[0][size_class], block_sizes[size_class]);
+        if (new_cache->pools[0][size_class].total_blocks > 0) {
+            new_cache->pool_counts[size_class] = 1;
+        }
     }
     
     thread_caches = new_cache;
