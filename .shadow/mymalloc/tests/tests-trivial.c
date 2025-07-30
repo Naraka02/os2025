@@ -47,6 +47,7 @@ void T_malloc() {
 
 SystemTest(concurrent, ((const char *[]){})) {
     pthread_t t1, t2, t3, t4;
+    
     pthread_create(&t1, NULL, (void *(*)(void *))T_malloc, NULL);
     pthread_create(&t2, NULL, (void *(*)(void *))T_malloc, NULL);
     pthread_create(&t3, NULL, (void *(*)(void *))T_malloc, NULL);
