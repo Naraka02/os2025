@@ -203,6 +203,7 @@ void *mymalloc(size_t size) {
     if (size_class >= 0) {
         thread_cache_t *cache = get_thread_cache();
         if (cache) {
+            // First check (without lock)
             for (int pool_idx = 0; pool_idx < cache->pool_counts[size_class]; pool_idx++) {
                 fast_pool_t *pool = &cache->pools[pool_idx][size_class];
                 if (pool->free_count > 0) {
@@ -214,6 +215,18 @@ void *mymalloc(size_t size) {
             }
             
             spin_lock(&big_lock);
+            
+            for (int pool_idx = 0; pool_idx < cache->pool_counts[size_class]; pool_idx++) {
+                fast_pool_t *pool = &cache->pools[pool_idx][size_class];
+                if (pool->free_count > 0) {
+                    void *result = alloc_from_pool(pool);
+                    if (result) {
+                        spin_unlock(&big_lock);
+                        return result;
+                    }
+                }
+            }
+
             if (cache->pool_counts[size_class] < NUM_POOLS) {
                 int new_pool_idx = cache->pool_counts[size_class];
                 init_fast_pool(&cache->pools[new_pool_idx][size_class], block_sizes[size_class]);
