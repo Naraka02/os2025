@@ -38,15 +38,16 @@ SystemTest(vmalloc, ((const char *[]){})) {
 #define N 100000
 void T_malloc() {
     for (int i = 0; i < N; i++) {
-        mymalloc(0);
+        void* p = mymalloc(8);
+        if (p) {
+            myfree(p);
+        }
     }
 }
 
 SystemTest(concurrent, ((const char *[]){})) {
-    // We don't need this malloc_count; you can safely remove this test case.
-    extern long malloc_count;
     pthread_t t1, t2, t3, t4;
-
+    
     pthread_create(&t1, NULL, (void *(*)(void *))T_malloc, NULL);
     pthread_create(&t2, NULL, (void *(*)(void *))T_malloc, NULL);
     pthread_create(&t3, NULL, (void *(*)(void *))T_malloc, NULL);
@@ -56,6 +57,4 @@ SystemTest(concurrent, ((const char *[]){})) {
     pthread_join(t2, NULL);
     pthread_join(t3, NULL);
     pthread_join(t4, NULL);
-
-    tk_assert(malloc_count == 4 * N, "malloc_count should be 4N");
 }
