@@ -19,7 +19,7 @@ typedef struct {
     int total_blocks;
 } fast_pool_t;
 
-typedef struct {
+typedef struct thread_cache_t {
     pid_t tid;
     fast_pool_t pools[NUM_POOLS][BLOCK_SIZES];
     int pool_counts[BLOCK_SIZES];
