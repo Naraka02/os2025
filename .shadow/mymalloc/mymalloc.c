@@ -24,7 +24,6 @@ typedef struct thread_cache_t {
     pid_t tid;
     fast_pool_t pools[NUM_POOLS][BLOCK_SIZES];
     int pool_counts[BLOCK_SIZES];
-    spinlock_t size_class_locks[BLOCK_SIZES];
     struct thread_cache_t *next;
 } thread_cache_t;
 
@@ -163,7 +162,6 @@ static thread_cache_t *get_thread_cache(void) {
 
     for (int size_class = 0; size_class < BLOCK_SIZES; size_class++) {
         new_cache->pool_counts[size_class] = 0;
-        new_cache->size_class_locks[size_class] = (spinlock_t){UNLOCKED};
         init_fast_pool(&new_cache->pools[0][size_class], block_sizes[size_class]);
         if (new_cache->pools[0][size_class].total_blocks > 0) {
             new_cache->pool_counts[size_class] = 1;
@@ -205,18 +203,17 @@ void *mymalloc(size_t size) {
     if (size_class >= 0) {
         thread_cache_t *cache = get_thread_cache();
         if (cache) {
-            spin_lock(&cache->size_class_locks[size_class]);
             for (int pool_idx = 0; pool_idx < cache->pool_counts[size_class]; pool_idx++) {
                 fast_pool_t *pool = &cache->pools[pool_idx][size_class];
                 if (pool->free_count > 0) {
                     void *result = alloc_from_pool(pool);
                     if (result) {
-                        spin_unlock(&cache->size_class_locks[size_class]);
                         return result;
                     }
                 }
             }
             
+            spin_lock(&big_lock);
             if (cache->pool_counts[size_class] < NUM_POOLS) {
                 int new_pool_idx = cache->pool_counts[size_class];
                 init_fast_pool(&cache->pools[new_pool_idx][size_class], block_sizes[size_class]);
@@ -224,12 +221,11 @@ void *mymalloc(size_t size) {
                 fast_pool_t *new_pool = &cache->pools[new_pool_idx][size_class];
                 if (new_pool->total_blocks > 0) {
                     cache->pool_counts[size_class]++;
-                    void* result = alloc_from_pool(new_pool);
-                    spin_unlock(&cache->size_class_locks[size_class]);
-                    return result;
+                    spin_unlock(&big_lock);
+                    return alloc_from_pool(new_pool);
                 }
             }
-            spin_unlock(&cache->size_class_locks[size_class]);
+            spin_unlock(&big_lock);
         }
     }
     
