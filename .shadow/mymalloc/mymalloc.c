@@ -15,6 +15,7 @@ typedef struct block {
 typedef struct pool {
     void* start;
     size_t total_size;
+    size_t used_size;
     block_t *free_list;
     struct pool *next;
 } pool_t;
@@ -29,6 +30,22 @@ typedef struct thread_cache {
 #define MIN_BLOCK_SIZE (sizeof(block_t))
 #define PAGE_SIZE 4096
 #define MAX_THREAD_CACHE_SIZE (PAGE_SIZE * 16)
+#define MIN_POOL_SIZE (PAGE_SIZE * 8)
+#define LARGE_POOL_SIZE (PAGE_SIZE * 32)
+
+#define SIZE_CLASS_COUNT 16
+static const size_t size_classes[SIZE_CLASS_COUNT] = {
+    16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288
+};
+
+static inline size_t get_size_class(size_t size) {
+    for (int i = 0; i < SIZE_CLASS_COUNT; i++) {
+        if (size <= size_classes[i]) {
+            return size_classes[i];
+        }
+    }
+    return size;
+}
 
 static thread_cache_t *thread_caches = NULL;
 static pool_t *global_pools = NULL;
@@ -97,7 +114,16 @@ static pool_t *find_pool_global(void *ptr) {
 }
 
 static int add_pool_to_cache(thread_cache_t *cache, size_t size) {
-    size_t total_size = ((size + sizeof(pool_t) + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+    size_t pool_size;
+    if (size <= PAGE_SIZE) {
+        pool_size = MIN_POOL_SIZE;
+    } else if (size <= LARGE_POOL_SIZE) {
+        pool_size = size * 4;
+    } else {
+        pool_size = size + PAGE_SIZE * 8;
+    }
+    
+    size_t total_size = ((pool_size + sizeof(pool_t) + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
 
     void *mem = vmalloc(NULL, total_size);
     if (!mem) {
@@ -107,6 +133,7 @@ static int add_pool_to_cache(thread_cache_t *cache, size_t size) {
     pool_t *pool = (pool_t *)mem;
     pool->start = (char *)mem + ALIGN(sizeof(pool_t));
     pool->total_size = total_size - ALIGN(sizeof(pool_t));
+    pool->used_size = 0;
     pool->next = cache->pools;
     cache->pools = pool;
 
@@ -120,7 +147,16 @@ static int add_pool_to_cache(thread_cache_t *cache, size_t size) {
 }
 
 static int add_pool_global(size_t size) {
-    size_t total_size = ((size + sizeof(pool_t) + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+    size_t pool_size;
+    if (size <= PAGE_SIZE) {
+        pool_size = MIN_POOL_SIZE;
+    } else if (size <= LARGE_POOL_SIZE) {
+        pool_size = size * 4;
+    } else {
+        pool_size = size + PAGE_SIZE * 8;
+    }
+    
+    size_t total_size = ((pool_size + sizeof(pool_t) + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
 
     void *mem = vmalloc(NULL, total_size);
     if (!mem) {
@@ -130,6 +166,7 @@ static int add_pool_global(size_t size) {
     pool_t *pool = (pool_t *)mem;
     pool->start = (char *)mem + ALIGN(sizeof(pool_t));
     pool->total_size = total_size - ALIGN(sizeof(pool_t));
+    pool->used_size = 0;
     pool->next = global_pools;
     global_pools = pool;
 
@@ -147,12 +184,18 @@ void *mymalloc(size_t size) {
         return NULL;
     }
 
+    size_t original_size = size;
     size = ALIGN(size + sizeof(block_t));
+    size = get_size_class(size);
     
     if (size <= MAX_THREAD_CACHE_SIZE) {
         thread_cache_t *cache = get_thread_cache();
         if (cache) {
             for (pool_t *pool = cache->pools; pool; pool = pool->next) {
+                if (pool->used_size > pool->total_size * 9 / 10) {
+                    continue;
+                }
+                
                 block_t **current = &pool->free_list;
 
                 while (*current) {
@@ -172,6 +215,8 @@ void *mymalloc(size_t size) {
                         *current = block->next;
                         block->is_free = 0;
                         block->next = NULL;
+                        
+                        pool->used_size += block->size;
 
                         return (char *)block + sizeof(block_t);
                     }
@@ -179,28 +224,40 @@ void *mymalloc(size_t size) {
                 }
             }
 
-            size_t pool_size = size > PAGE_SIZE ? size * 2 : PAGE_SIZE * 2;
-            if (add_pool_to_cache(cache, pool_size)) {
-                pool_t *new_pool = cache->pools;
-                if (new_pool && new_pool->free_list && new_pool->free_list->size >= size) {
-                    block_t *block = new_pool->free_list;
-                    
-                    if (block->size >= size + MIN_BLOCK_SIZE + 32) {
-                        block_t *new_block = (block_t*)((char*)block + size);
-                        new_block->size = block->size - size;
-                        new_block->next = block->next;
-                        new_block->is_free = 1;
-                        
-                        block->size = size;
-                        new_pool->free_list = new_block;
-                    } else {
-                        new_pool->free_list = block->next;
+            int need_new_pool = 1;
+            if (cache->pools) {
+                for (pool_t *pool = cache->pools; pool; pool = pool->next) {
+                    if (pool->used_size < pool->total_size / 2) {
+                        need_new_pool = 0;
+                        break;
                     }
-                    
-                    block->is_free = 0;
-                    block->next = NULL;
-                    
-                    return (char*)block + sizeof(block_t);
+                }
+            }
+            
+            if (need_new_pool) {
+                if (add_pool_to_cache(cache, size)) {
+                    pool_t *new_pool = cache->pools;
+                    if (new_pool && new_pool->free_list && new_pool->free_list->size >= size) {
+                        block_t *block = new_pool->free_list;
+                        
+                        if (block->size >= size + MIN_BLOCK_SIZE + 32) {
+                            block_t *new_block = (block_t*)((char*)block + size);
+                            new_block->size = block->size - size;
+                            new_block->next = block->next;
+                            new_block->is_free = 1;
+                            
+                            block->size = size;
+                            new_pool->free_list = new_block;
+                        } else {
+                            new_pool->free_list = block->next;
+                        }
+                        
+                        block->is_free = 0;
+                        block->next = NULL;
+                        new_pool->used_size += block->size;
+                        
+                        return (char*)block + sizeof(block_t);
+                    }
                 }
             }
         }
@@ -210,6 +267,10 @@ void *mymalloc(size_t size) {
     spin_lock(&big_lock);
 
     for (pool_t *pool = global_pools; pool; pool = pool->next) {
+        if (pool->used_size > pool->total_size * 9 / 10) {
+            continue;
+        }
+        
         block_t **current = &pool->free_list;
 
         while(*current) {
@@ -229,6 +290,8 @@ void *mymalloc(size_t size) {
                 *current = block->next;
                 block->is_free = 0;
                 block->next = NULL;
+                
+                pool->used_size += block->size;
 
                 spin_unlock(&big_lock);
                 return (char *)block + sizeof(block_t);
@@ -237,33 +300,45 @@ void *mymalloc(size_t size) {
         }
     }
 
-    size_t pool_size = size > PAGE_SIZE ? size * 2: PAGE_SIZE * 4;
-    if (!add_pool_global(pool_size)) {
-        spin_unlock(&big_lock);
-        return NULL;
+    int need_new_pool = 1;
+    if (global_pools) {
+        for (pool_t *pool = global_pools; pool; pool = pool->next) {
+            if (pool->used_size < pool->total_size / 2) {
+                need_new_pool = 0;
+                break;
+            }
+        }
     }
     
-    pool_t *new_pool = global_pools;
-    if (new_pool && new_pool->free_list && new_pool->free_list->size >= size) {
-        block_t *block = new_pool->free_list;
-        
-        if (block->size >= size + MIN_BLOCK_SIZE + 32) {
-            block_t *new_block = (block_t*)((char*)block + size);
-            new_block->size = block->size - size;
-            new_block->next = block->next;
-            new_block->is_free = 1;
-            
-            block->size = size;
-            new_pool->free_list = new_block;
-        } else {
-            new_pool->free_list = block->next;
+    if (need_new_pool) {
+        if (!add_pool_global(size)) {
+            spin_unlock(&big_lock);
+            return NULL;
         }
         
-        block->is_free = 0;
-        block->next = NULL;
-        
-        spin_unlock(&big_lock);
-        return (char*)block + sizeof(block_t);
+        pool_t *new_pool = global_pools;
+        if (new_pool && new_pool->free_list && new_pool->free_list->size >= size) {
+            block_t *block = new_pool->free_list;
+            
+            if (block->size >= size + MIN_BLOCK_SIZE + 32) {
+                block_t *new_block = (block_t*)((char*)block + size);
+                new_block->size = block->size - size;
+                new_block->next = block->next;
+                new_block->is_free = 1;
+                
+                block->size = size;
+                new_pool->free_list = new_block;
+            } else {
+                new_pool->free_list = block->next;
+            }
+            
+            block->is_free = 0;
+            block->next = NULL;
+            new_pool->used_size += block->size;
+            
+            spin_unlock(&big_lock);
+            return (char*)block + sizeof(block_t);
+        }
     }
     
     spin_unlock(&big_lock);
@@ -285,6 +360,7 @@ void myfree(void *ptr) {
             }
             
             block->is_free = 1;
+            pool->used_size -= block->size;
             
             block_t **current = &pool->free_list;
             block_t *prev = NULL;
@@ -328,6 +404,7 @@ void myfree(void *ptr) {
     }
     
     block->is_free = 1;
+    pool->used_size -= block->size;
     
     block_t **current = &pool->free_list;
     block_t *prev = NULL;
