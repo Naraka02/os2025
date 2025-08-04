@@ -103,6 +103,7 @@ int main(int argc, char *argv[]) {
 void handle_request(int client_socket) {
     char buffer[BUFFER_SIZE];
     int bytes_received;
+    int status_code = 200; // Default status code
 
     // Read request
     bytes_received = recv(client_socket, buffer, BUFFER_SIZE - 1, 0);
@@ -112,6 +113,139 @@ void handle_request(int client_socket) {
     buffer[bytes_received] = '\0';
 
     printf("Got a new request:\n%s\n", buffer);
+
+    // Parse the request line
+    char method[16], path[MAX_PATH_LENGTH], version[16];
+    if (sscanf(buffer, "%15s %1023s %15s", method, path, version) != 3) {
+        // Invalid request format
+        const char *response = "HTTP/1.1 404 Not Found\r\n\r\nInvalid request";
+        send(client_socket, response, strlen(response), 0);
+        close(client_socket);
+        return;
+    }
+
+    // Check if this is a CGI request
+    if (strncmp(path, "/cgi-bin/", 9) != 0) {
+        // Not a CGI request, return 404
+        const char *response = "HTTP/1.1 404 Not Found\r\n\r\nNot a CGI request";
+        send(client_socket, response, strlen(response), 0);
+        close(client_socket);
+        return;
+    }
+
+    // Extract the CGI script name
+    char script_name[MAX_PATH_LENGTH];
+    snprintf(script_name, sizeof(script_name), "%s", path + 9); // Skip "/cgi-bin/"
+
+    // Check for query string
+    char *query_string = strchr(script_name, '?');
+    if (query_string) {
+        *query_string = '\0'; // Terminate script name at '?'
+        query_string++; // Move past the '?'
+    } else {
+        query_string = "";
+    }
+
+    char full_path[MAX_PATH_LENGTH];
+    snprintf(full_path, sizeof(full_path), "./cgi-bin/%s", script_name);
+
+    // Set environment variables for CGI
+    setenv("REQUEST_METHOD", method, 1);
+    setenv("QUERY_STRING", query_string, 1);
+
+    // Create a pipe to capture CGI output
+    int pipe_fd[2];
+    if (pipe(pipe_fd) < 0) {
+        perror("Pipe creation failed");
+        status_code = 500; // Internal Server Error
+        close(client_socket);
+        goto send_error;
+    }
+
+    // Fork a child process to execute the CGI script
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        perror("Fork failed");
+        status_code = 500; // Internal Server Error
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
+        close(client_socket);
+        goto send_error;
+    }
+
+    if (pid == 0) {
+        // Child process: close the read end of the pipe
+        close(pipe_fd[0]);
+
+        // Redirect stdout to the write end of the pipe
+        dup2(pipe_fd[1], STDOUT_FILENO);
+        close(pipe_fd[1]);
+
+        // Execute the CGI script
+        execl(full_path, full_path, (char *)NULL);
+
+        // If execl fails, send an error message to the pipe
+        perror("Exec failed");
+        exit(EXIT_FAILURE);
+    } else {
+        // Parent process: close the write end of the pipe
+        close(pipe_fd[1]);
+
+        // Read output from the CGI script
+        char cgi_output[BUFFER_SIZE];
+        int output_length = 0;
+        int bytes_read;
+
+        while ((bytes_read = read(pipe_fd[0], cgi_output + output_length, BUFFER_SIZE - output_length - 1)) > 0) {
+            output_length += bytes_read;
+        }
+
+        close(pipe_fd[0]);
+        cgi_output[output_length] = '\0';
+
+        // Wait for the child process to finish
+        int status;
+        waitpid(pid, &status, 0);
+
+        if (WIFEXITED(status)) {
+            status_code = WEXITSTATUS(status);
+            if (status_code == 0) status_code = 200; // Map success to HTTP 200
+        } else {
+            status_code = 500; // Internal server error if abnormal termination
+        }
+
+        // Send response
+        char status_line[64];
+        sprintf(status_line, "HTTP/1.1 %d %s\r\n", 
+                   status_code, status_code == 200 ? "OK" : "Internal Server Error");
+            
+        char content_length_header[64];
+        sprintf(content_length_header, "Content-Length: %d\r\n", output_length);
+            
+        send(client_socket, status_line, strlen(status_line), 0);
+        send(client_socket, "Content-Type: text/plain\r\n", 26, 0);
+        send(client_socket, content_length_header, strlen(content_length_header), 0);
+        send(client_socket, "Connection: close\r\n", 19, 0);
+        send(client_socket, "\r\n", 2, 0);
+        send(client_socket, cgi_output, output_length, 0);
+            
+        // Log the request
+        log_request(method, path, status_code);
+
+        close(client_socket);
+        return;
+
+send_error:
+        // Send error response if CGI execution failed
+        char error_response[256];
+        sprintf(error_response, "HTTP/1.1 %d %s\r\n\r\nError executing CGI script", 
+               status_code, status_code == 500 ? "Internal Server Error" : "Bad Request");
+        send(client_socket, error_response, strlen(error_response), 0);
+        log_request(method, path, status_code);
+        close(client_socket);
+        return;
+    }
 
     // Send "Under construction" response
     const char *response_body = "Under construction";
@@ -128,6 +262,7 @@ void handle_request(int client_socket) {
     send(client_socket, response_body, body_length, 0);
 
     // Close the connection
+    log_request(method, path, status_code);
     close(client_socket);
 }
 
