@@ -15,6 +15,46 @@
 #define N_THREADS 4
 
 // ----------------------------------------------------------------------------
+// Parallelism
+typedef struct {
+    void (*fn)(int);
+} Task;
+
+Task tasks[N_THREADS];
+sem_t task_sem;
+sem_t done_sem;
+
+void worker_thread(int id) {
+    while (1) {
+        sem_wait(&task_sem);
+        Task* task = &tasks[id - 1];
+        if (task->fn == NULL) {
+            break; // Exit signal
+        }
+        task->fn(id);
+        sem_post(&done_sem);
+    }
+}
+
+void dispatch_tasks(void (*fn)(int)) {
+    for (int i = 0; i < N_THREADS; i++) {
+        tasks[i].fn = fn;
+        sem_post(&task_sem);
+    }
+    for (int i = 0; i < N_THREADS; i++) {
+        sem_wait(&done_sem);
+    }
+}
+
+void stop_all_workers() {
+    for (int i = 0; i < N_THREADS; i++) {
+        tasks[i].fn = NULL;
+        sem_post(&task_sem);
+    }
+    join();
+}
+
+// ----------------------------------------------------------------------------
 // all the individual layers' forward passes
 // B = batch_size, T = sequence_length, C = channels, V = vocab_size
 
@@ -131,14 +171,11 @@ void matmul_forward_worker(int id) {
 void matmul_forward(float* out,
                     float* inp, float* weight, float* bias,
                     int B, int T, int C, int OC) {
-    matmul_forward_params = (MatmulForwardParams){
+    matmul_forward_params = (MatmulForwardParams) {
         .out = out, .inp = inp, .weight = weight, .bias = bias,
         .B = B, .T = T, .C = C, .OC = OC,
     };
-    for (int i = 0; i < N_THREADS; i++) {
-        spawn(matmul_forward_worker);
-    }
-    join();
+    dispatch_tasks(matmul_forward_worker);
 }
 
 void attention_forward(float* out, float* preatt, float* att,
@@ -598,9 +635,16 @@ int sample_mult(float* probabilities, int n) {
 #define GPT2_EOT 50256
 
 int main(int argc, char** argv) {
+    sem_init(&task_sem, 0, 0);
+    sem_init(&done_sem, 0, 0);
+    for (int i = 0; i < N_THREADS; i++) {
+        spawn(worker_thread);
+    }
+
     GPT2 model;
     gpt2_build_from_checkpoint(&model, "gpt2_124M.bin");
     const int n = 10;  // Token limit.
+
 
     if (argc == 1) {
         printf("Provide at least one token.\n");
@@ -630,6 +674,8 @@ int main(int argc, char** argv) {
         printf("%d\n", tokens[t]);
         fflush(stdout);
     }
+
+    stop_all_workers();
 
     gpt2_free(&model);
 
