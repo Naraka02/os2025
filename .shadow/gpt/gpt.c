@@ -12,6 +12,8 @@
 #include "thread.h"
 #include "thread-sync.h"
 
+#define N_THREADS 4
+
 // ----------------------------------------------------------------------------
 // all the individual layers' forward passes
 // B = batch_size, T = sequence_length, C = channels, V = vocab_size
