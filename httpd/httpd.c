@@ -10,6 +10,7 @@
 #include <time.h>
 #include <errno.h>
 #include <signal.h>
+#include <ctype.h>
 
 // Don't include these in another file.
 #include "thread.h"
@@ -18,9 +19,35 @@
 #define BUFFER_SIZE 4096
 #define MAX_PATH_LENGTH 1024
 #define DEFAULT_PORT 8080
+#define MAX_WORKERS 4
+#define QUEUE_SIZE 100
 
-// Revise this.
-void handle_request(int client_socket);
+// Request structure with sequence number for ordered logging
+typedef struct {
+    int client_socket;
+    int seq_number;
+} request_t;
+
+// Global variables for request queue and synchronization
+static request_t request_queue[QUEUE_SIZE];
+static int queue_head = 0;
+static int queue_tail = 0;
+static int queue_count = 0;
+static int next_seq = 0;
+static int next_log_seq = 0;
+
+// Synchronization primitives
+static mutex_t queue_mutex = MUTEX_INIT();
+static mutex_t log_mutex = MUTEX_INIT();
+static cond_t queue_not_empty = COND_INIT();
+static cond_t queue_not_full = COND_INIT();
+static cond_t can_log = COND_INIT();
+
+// Function declarations
+void handle_request_with_seq(int client_socket, int seq);
+void worker_thread(int worker_id);
+void enqueue_request(int client_socket);
+void synchronized_log(const char *method, const char *path, int status_code, int seq);
 
 // Call this.
 void log_request(const char *method, const char *path, int status_code);
@@ -70,7 +97,12 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    printf("Server listening on port %d...\n", port);
+    printf("Server listening on port %d with %d worker threads...\n", port, MAX_WORKERS);
+
+    // Create worker threads
+    for (int i = 0; i < MAX_WORKERS; i++) {
+        spawn(worker_thread);
+    }
 
     // Main server loop - accept and process connections indefinitely
     while (1) {
@@ -91,8 +123,8 @@ int main(int argc, char *argv[]) {
         setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO,
                    (const char*)&timeout, sizeof(timeout));
 
-        // Process the client request
-        handle_request(client_socket);
+        // Add request to queue for worker threads to process
+        enqueue_request(client_socket);
     }
 
     // Clean up (note: this code is never reached in this example)
@@ -100,9 +132,78 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-void handle_request(int client_socket) {
+// Add request to the queue with sequence number
+void enqueue_request(int client_socket) {
+    mutex_lock(&queue_mutex);
+    
+    // Wait for space in queue
+    while (queue_count == QUEUE_SIZE) {
+        cond_wait(&queue_not_full, &queue_mutex);
+    }
+    
+    // Add request to queue with sequence number
+    request_queue[queue_tail].client_socket = client_socket;
+    request_queue[queue_tail].seq_number = next_seq++;
+    queue_tail = (queue_tail + 1) % QUEUE_SIZE;
+    queue_count++;
+    
+    // Signal that queue is not empty
+    cond_signal(&queue_not_empty);
+    mutex_unlock(&queue_mutex);
+}
+
+// Get request from queue
+request_t dequeue_request() {
+    mutex_lock(&queue_mutex);
+    
+    // Wait for request in queue
+    while (queue_count == 0) {
+        cond_wait(&queue_not_empty, &queue_mutex);
+    }
+    
+    // Get request from queue
+    request_t req = request_queue[queue_head];
+    queue_head = (queue_head + 1) % QUEUE_SIZE;
+    queue_count--;
+    
+    // Signal that queue is not full
+    cond_signal(&queue_not_full);
+    mutex_unlock(&queue_mutex);
+    return req;
+}
+
+// Synchronized logging to maintain request order
+void synchronized_log(const char *method, const char *path, int status_code, int seq) {
+    mutex_lock(&log_mutex);
+    
+    // Wait until it's this request's turn to log
+    while (seq != next_log_seq) {
+        cond_wait(&can_log, &log_mutex);
+    }
+    
+    // Log the request
+    log_request(method, path, status_code);
+    
+    // Update next sequence and signal others
+    next_log_seq++;
+    cond_broadcast(&can_log);
+    
+    mutex_unlock(&log_mutex);
+}
+
+// Worker thread function
+void worker_thread(int worker_id) {
+    while (1) {
+        // Get request from queue
+        request_t req = dequeue_request();
+        handle_request_with_seq(req.client_socket, req.seq_number);
+    }
+}
+
+void handle_request_with_seq(int client_socket, int seq) {
     char buffer[BUFFER_SIZE];
     int bytes_received;
+    int status_code = 200; // Default status code
 
     // Read request
     bytes_received = recv(client_socket, buffer, BUFFER_SIZE - 1, 0);
@@ -113,22 +214,141 @@ void handle_request(int client_socket) {
 
     printf("Got a new request:\n%s\n", buffer);
 
-    // Send "Under construction" response
-    const char *response_body = "Under construction";
-    int body_length = strlen(response_body);
-    
-    char content_length_header[64];
-    sprintf(content_length_header, "Content-Length: %d\r\n", body_length);
-    
-    send(client_socket, "HTTP/1.1 200 OK\r\n", 17, 0);
-    send(client_socket, "Content-Type: text/plain\r\n", 26, 0);
-    send(client_socket, content_length_header, strlen(content_length_header), 0);
-    send(client_socket, "Connection: close\r\n", 19, 0);
-    send(client_socket, "\r\n", 2, 0);
-    send(client_socket, response_body, body_length, 0);
+    // Parse the request line
+    char method[16], path[MAX_PATH_LENGTH], version[16];
+    if (sscanf(buffer, "%15s %1023s %15s", method, path, version) != 3) {
+        // Invalid request format
+        const char *response = "HTTP/1.1 404 Not Found\r\n\r\nInvalid request";
+        send(client_socket, response, strlen(response), 0);
+        synchronized_log("", "", 404, seq);
+        close(client_socket);
+        return;
+    }
 
-    // Close the connection
-    close(client_socket);
+    // Check if this is a CGI request
+    if (strncmp(path, "/cgi-bin/", 9) != 0) {
+        // Not a CGI request, return 404
+        const char *response = "HTTP/1.1 404 Not Found\r\n\r\nNot a CGI request";
+        send(client_socket, response, strlen(response), 0);
+        synchronized_log(method, path, 404, seq);
+        close(client_socket);
+        return;
+    }
+
+    // Extract the CGI script name
+    char script_name[MAX_PATH_LENGTH - 10];
+    snprintf(script_name, sizeof(script_name), "%s", path + 9); // Skip "/cgi-bin/"
+
+    // Check for query string
+    char *query_string = strchr(script_name, '?');
+    if (query_string) {
+        *query_string = '\0'; // Terminate script name at '?'
+        query_string++; // Move past the '?'
+    } else {
+        query_string = "";
+    }
+
+    char full_path[MAX_PATH_LENGTH];
+    snprintf(full_path, sizeof(full_path), "./cgi-bin/%s", script_name);
+
+    // Set environment variables for CGI
+    setenv("REQUEST_METHOD", method, 1);
+    setenv("QUERY_STRING", query_string, 1);
+
+    // Create a pipe to capture CGI output
+    int pipe_fd[2];
+    if (pipe(pipe_fd) < 0) {
+        perror("Pipe creation failed");
+        status_code = 500; // Internal Server Error
+        goto send_error;
+    }
+
+    // Fork a child process to execute the CGI script
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        perror("Fork failed");
+        status_code = 500; // Internal Server Error
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
+        goto send_error;
+    }
+
+    if (pid == 0) {
+        // Child process: close the read end of the pipe
+        close(pipe_fd[0]);
+
+        // Redirect stdout to the write end of the pipe
+        dup2(pipe_fd[1], STDOUT_FILENO);
+        close(pipe_fd[1]);
+
+        // Execute the CGI script
+        execl(full_path, full_path, (char *)NULL);
+
+        // If execl fails, send an error message to the pipe
+        perror("Exec failed");
+        exit(EXIT_FAILURE);
+    } else {
+        // Parent process: close the write end of the pipe
+        close(pipe_fd[1]);
+
+        // Wait for the child process to finish
+        int status;
+        waitpid(pid, &status, 0);
+
+        // Read output from the CGI script
+        char cgi_output[BUFFER_SIZE];
+        int output_length = 0;
+        int bytes_read;
+
+        while ((bytes_read = read(pipe_fd[0], cgi_output + output_length, BUFFER_SIZE - output_length - 1)) > 0) {
+            output_length += bytes_read;
+        }
+
+        close(pipe_fd[0]);
+        cgi_output[output_length] = '\0';
+
+        if (!WIFEXITED(status)) {
+            status_code = 500;
+            goto send_error;
+        }
+
+        if (WEXITSTATUS(status) != 0) {
+            status_code = 500;
+            goto send_error;
+        }
+
+        if (strncmp(cgi_output, "HTTP/", 5) == 0) {
+            char *status_start = cgi_output;
+            // Skip past "HTTP/1.x "
+            while (*status_start && *status_start != ' ') status_start++;
+            if (*status_start) status_start++;
+            
+            // Extract the status code
+            if (isdigit(*status_start)) {
+                status_code = atoi(status_start);
+            }
+        }
+
+        // Send response
+        send(client_socket, cgi_output, output_length, 0);
+            
+        // Log the request with sequence number
+        synchronized_log(method, path, status_code, seq);
+
+        close(client_socket);
+        return;
+
+    send_error:
+        // Send error response if CGI execution failed
+        char error_response[256];
+        sprintf(error_response, "HTTP/1.1 %d %s\r\n\r\nError executing CGI script", 
+               status_code, status_code == 500 ? "Internal Server Error" : "Bad Request");
+        send(client_socket, error_response, strlen(error_response), 0);
+        synchronized_log(method, path, status_code, seq);
+        close(client_socket);
+        return;
+    }
 }
 
 void log_request(const char *method, const char *path, int status_code) {
