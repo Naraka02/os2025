@@ -208,10 +208,7 @@ void handle_request(int client_socket) {
         int status;
         waitpid(pid, &status, 0);
 
-        if (WIFEXITED(status)) {
-            status_code = WEXITSTATUS(status);
-            if (status_code == 0) status_code = 200; // Map success to HTTP 200
-        } else {
+        if (!WIFEXITED(status)) {
             status_code = 500; // Internal server error if abnormal termination
         }
 
@@ -231,6 +228,7 @@ void handle_request(int client_socket) {
         send(client_socket, cgi_output, output_length, 0);
             
         // Log the request
+        sscanf(cgi_output, "%15s %d", version, status_code);
         log_request(method, path, status_code);
 
         close(client_socket);
