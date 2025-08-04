@@ -225,7 +225,7 @@ void handle_request(int client_socket) {
         // send(client_socket, content_length_header, strlen(content_length_header), 0);
         // send(client_socket, "Connection: close\r\n", 19, 0);
         // send(client_socket, "\r\n", 2, 0);
-        sscanf(cgi_output, "%15s %d", version, status_code);
+        // sscanf(cgi_output, "%15s %d", version, status_code);
         send(client_socket, cgi_output, output_length, 0);
             
         // Log the request
