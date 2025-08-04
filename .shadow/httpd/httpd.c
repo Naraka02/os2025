@@ -209,13 +209,13 @@ void handle_request(int client_socket) {
         int status;
         waitpid(pid, &status, 0);
 
-        if (WIFEXITED(status) == 0) {
-            status_code = 500;
+        if (!WIFEXITED(status)) {
+            status_code = status;
             goto send_error;
         }
 
         if (WEXITSTATUS(status) != 0) {
-            status_code = 500;
+            status_code = status;
             goto send_error;
         }
 
