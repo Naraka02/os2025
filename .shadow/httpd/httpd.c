@@ -208,8 +208,13 @@ void handle_request(int client_socket) {
         int status;
         waitpid(pid, &status, 0);
 
-        if (WIFEXITED(status) != 0 || WEXITSTATUS(status) != 0) {
+        if (WIFEXITED(status) != 0) {
             // If the script exited with non-zero status, use 500
+            status_code = 500;
+            goto send_error;
+        }
+
+        if (WEXITSTATUS(status) != 0) {
             status_code = 500;
             goto send_error;
         }
