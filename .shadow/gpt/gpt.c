@@ -51,7 +51,6 @@ void stop_all_workers() {
         tasks[i].fn = NULL;
         sem_post(&task_sem);
     }
-    join();
 }
 
 // ----------------------------------------------------------------------------
@@ -676,7 +675,7 @@ int main(int argc, char** argv) {
     }
 
     stop_all_workers();
-
+    join();
     gpt2_free(&model);
 
     return 0;
