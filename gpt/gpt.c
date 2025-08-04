@@ -12,6 +12,47 @@
 #include "thread.h"
 #include "thread-sync.h"
 
+#define N_THREADS 4
+
+// ----------------------------------------------------------------------------
+// Parallelism
+typedef struct {
+    void (*fn)(int);
+} Task;
+
+Task tasks[N_THREADS];
+sem_t task_sem;
+sem_t done_sem;
+
+void worker_thread(int id) {
+    while (1) {
+        sem_wait(&task_sem);
+        Task* task = &tasks[id - 1];
+        if (task->fn == NULL) {
+            break; // Exit signal
+        }
+        task->fn(id);
+        sem_post(&done_sem);
+    }
+}
+
+void dispatch_tasks(void (*fn)(int)) {
+    for (int i = 0; i < N_THREADS; i++) {
+        tasks[i].fn = fn;
+        sem_post(&task_sem);
+    }
+    for (int i = 0; i < N_THREADS; i++) {
+        sem_wait(&done_sem);
+    }
+}
+
+void stop_all_workers() {
+    for (int i = 0; i < N_THREADS; i++) {
+        tasks[i].fn = NULL;
+        sem_post(&task_sem);
+    }
+}
+
 // ----------------------------------------------------------------------------
 // all the individual layers' forward passes
 // B = batch_size, T = sequence_length, C = channels, V = vocab_size
@@ -83,20 +124,40 @@ void layernorm_forward(float* out, float* mean, float* rstd,
     }
 }
 
-void matmul_forward(float* out,
-                    float* inp, float* weight, float* bias,
-                    int B, int T, int C, int OC) {
-    // most of the running time is spent here and in matmul_backward
-    // OC is short for "output channels"
-    // inp is (B,T,C), weight is (OC, C), bias is (OC)
-    // out will be (B,T,OC)
+typedef struct MatmulForwardParams {
+    float* out;
+    float* inp;
+    float* weight;
+    float* bias;
+    int B;
+    int T;
+    int C;
+    int OC;
+} MatmulForwardParams;
+
+MatmulForwardParams matmul_forward_params;
+
+void matmul_forward_worker(int id) {
+    MatmulForwardParams* params = &matmul_forward_params;
+    float* out = params->out;
+    float* inp = params->inp;
+    float* weight = params->weight;
+    float* bias = params->bias;
+    int B = params->B;
+    int T = params->T;
+    int C = params->C;
+    int OC = params->OC;
+
+    int o_start = (id - 1) * OC / N_THREADS;
+    int o_end = id * OC / N_THREADS;
+
     for (int b = 0; b < B; b++) {
         for (int t = 0; t < T; t++) {
             float* out_bt = out + b * T * OC + t * OC;
             float* inp_bt = inp + b * T * C + t * C;
-            for (int o = 0; o < OC; o++) {
+            for (int o = o_start; o < o_end; o++) {
                 float val = (bias != NULL) ? bias[o] : 0.0f;
-                float* wrow = weight + o*C;
+                float* wrow = weight + o * C;
                 for (int i = 0; i < C; i++) {
                     val += inp_bt[i] * wrow[i];
                 }
@@ -104,6 +165,16 @@ void matmul_forward(float* out,
             }
         }
     }
+}
+
+void matmul_forward(float* out,
+                    float* inp, float* weight, float* bias,
+                    int B, int T, int C, int OC) {
+    matmul_forward_params = (MatmulForwardParams) {
+        .out = out, .inp = inp, .weight = weight, .bias = bias,
+        .B = B, .T = T, .C = C, .OC = OC,
+    };
+    dispatch_tasks(matmul_forward_worker);
 }
 
 void attention_forward(float* out, float* preatt, float* att,
@@ -391,7 +462,7 @@ void gpt2_build_from_checkpoint(GPT2 *model, char* checkpoint_path) {
     model->param_sizes[14] = C; // lnfw
     model->param_sizes[15] = C; // lnfb
 
-    // cound the number of paramaters
+    // count the number of paramaters
     size_t num_parameters = 0;
     for (size_t i = 0; i < NUM_PARAMETER_TENSORS; i++) {
         num_parameters += model->param_sizes[i];
@@ -563,6 +634,12 @@ int sample_mult(float* probabilities, int n) {
 #define GPT2_EOT 50256
 
 int main(int argc, char** argv) {
+    sem_init(&task_sem, 0, 0);
+    sem_init(&done_sem, 0, 0);
+    for (int i = 0; i < N_THREADS; i++) {
+        spawn(worker_thread);
+    }
+
     GPT2 model;
     gpt2_build_from_checkpoint(&model, "gpt2_124M.bin");
     const int n = 10;  // Token limit.
@@ -596,6 +673,8 @@ int main(int argc, char** argv) {
         fflush(stdout);
     }
 
+    stop_all_workers();
+    join();
     gpt2_free(&model);
 
     return 0;
