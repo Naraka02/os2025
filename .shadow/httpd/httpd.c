@@ -208,28 +208,28 @@ void handle_request(int client_socket) {
         int status;
         waitpid(pid, &status, 0);
 
-        if (!WIFEXITED(status)) {
-            status_code = 500; // Internal server error if abnormal termination
+        if (WIFEXITED(status) != 0 || WEXITSTATUS(status) != 0) {
+            // If the script exited with non-zero status, use 500
+            status_code = 500;
+            goto send_error;
+        }
+
+        if (strncmp(cgi_output, "HTTP/", 5) == 0) {
+            char *status_start = cgi_output;
+            // Skip past "HTTP/1.x "
+            while (*status_start && *status_start != ' ') status_start++;
+            if (*status_start) status_start++; // Skip the space
+            
+            // Extract the status code
+            if (isdigit(*status_start)) {
+                status_code = atoi(status_start);
+            }
         }
 
         // Send response
-        // char status_line[64];
-        // sprintf(status_line, "HTTP/1.1 %d %s\r\n", 
-        //            status_code, status_code == 200 ? "OK" : "Internal Server Error");
-            
-        // char content_length_header[64];
-        // sprintf(content_length_header, "Content-Length: %d\r\n", output_length);
-            
-        // send(client_socket, status_line, strlen(status_line), 0);
-        // send(client_socket, "Content-Type: text/plain\r\n", 26, 0);
-        // send(client_socket, content_length_header, strlen(content_length_header), 0);
-        // send(client_socket, "Connection: close\r\n", 19, 0);
-        // send(client_socket, "\r\n", 2, 0);
-        // sscanf(cgi_output, "%15s %d", version, status_code);
         send(client_socket, cgi_output, output_length, 0);
             
         // Log the request
-
         log_request(method, path, status_code);
 
         close(client_socket);
