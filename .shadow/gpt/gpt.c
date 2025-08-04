@@ -85,19 +85,6 @@ void layernorm_forward(float* out, float* mean, float* rstd,
     }
 }
 
-void matmul_forward(float* out,
-                    float* inp, float* weight, float* bias,
-                    int B, int T, int C, int OC) {
-    matmul_forward_params = (MatmulForwardParams){
-        .out = out, .inp = inp, .weight = weight, .bias = bias,
-        .B = B, .T = T, .C = C, .OC = OC,
-    };
-    for (int i = 0; i < N_THREADS; i++) {
-        spawn(matmul_forward_worker);
-    }
-    join();
-}
-
 typedef struct MatmulForwardParams {
     float* out;
     float* inp;
@@ -139,6 +126,19 @@ void matmul_forward_worker(int id) {
             }
         }
     }
+}
+
+void matmul_forward(float* out,
+                    float* inp, float* weight, float* bias,
+                    int B, int T, int C, int OC) {
+    matmul_forward_params = (MatmulForwardParams){
+        .out = out, .inp = inp, .weight = weight, .bias = bias,
+        .B = B, .T = T, .C = C, .OC = OC,
+    };
+    for (int i = 0; i < N_THREADS; i++) {
+        spawn(matmul_forward_worker);
+    }
+    join();
 }
 
 void attention_forward(float* out, float* preatt, float* att,
