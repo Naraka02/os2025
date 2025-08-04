@@ -10,6 +10,7 @@
 #include <time.h>
 #include <errno.h>
 #include <signal.h>
+#include <ctype.h>
 
 // Don't include these in another file.
 #include "thread.h"
@@ -147,7 +148,7 @@ void handle_request(int client_socket) {
     }
 
     char full_path[MAX_PATH_LENGTH];
-    snprintf(full_path, sizeof(full_path), "./cgi-bin/%s", script_name);
+    snprintf(full_path, sizeof(full_path), "./cgi-bin/%1023s", script_name);
 
     // Set environment variables for CGI
     setenv("REQUEST_METHOD", method, 1);
