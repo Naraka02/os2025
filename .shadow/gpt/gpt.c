@@ -644,7 +644,6 @@ int main(int argc, char** argv) {
     gpt2_build_from_checkpoint(&model, "gpt2_124M.bin");
     const int n = 10;  // Token limit.
 
-
     if (argc == 1) {
         printf("Provide at least one token.\n");
         exit(1);
