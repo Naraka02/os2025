@@ -210,12 +210,12 @@ void handle_request(int client_socket) {
         cgi_output[output_length] = '\0';
 
         if (!WIFEXITED(status)) {
-            status_code = status;
+            status_code = 500;
             goto send_error;
         }
 
         if (WEXITSTATUS(status) != 0) {
-            status_code = status;
+            status_code = 500;
             goto send_error;
         }
 
