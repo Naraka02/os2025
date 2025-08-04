@@ -176,7 +176,7 @@ void handle_request(int client_socket) {
 
     if (pid == 0) {
         // Child process: close the read end of the pipe
-        //close(pipe_fd[0]);
+        close(pipe_fd[0]);
 
         // Redirect stdout to the write end of the pipe
         dup2(pipe_fd[1], STDOUT_FILENO);
