@@ -223,11 +223,11 @@ void handle_request(int client_socket) {
         char content_length_header[64];
         sprintf(content_length_header, "Content-Length: %d\r\n", output_length);
             
-        send(client_socket, status_line, strlen(status_line), 0);
-        send(client_socket, "Content-Type: text/plain\r\n", 26, 0);
-        send(client_socket, content_length_header, strlen(content_length_header), 0);
-        send(client_socket, "Connection: close\r\n", 19, 0);
-        send(client_socket, "\r\n", 2, 0);
+        // send(client_socket, status_line, strlen(status_line), 0);
+        // send(client_socket, "Content-Type: text/plain\r\n", 26, 0);
+        // send(client_socket, content_length_header, strlen(content_length_header), 0);
+        // send(client_socket, "Connection: close\r\n", 19, 0);
+        // send(client_socket, "\r\n", 2, 0);
         send(client_socket, cgi_output, output_length, 0);
             
         // Log the request
@@ -246,24 +246,6 @@ send_error:
         close(client_socket);
         return;
     }
-
-    // Send "Under construction" response
-    const char *response_body = "Under construction";
-    int body_length = strlen(response_body);
-    
-    char content_length_header[64];
-    sprintf(content_length_header, "Content-Length: %d\r\n", body_length);
-    
-    send(client_socket, "HTTP/1.1 200 OK\r\n", 17, 0);
-    send(client_socket, "Content-Type: text/plain\r\n", 26, 0);
-    send(client_socket, content_length_header, strlen(content_length_header), 0);
-    send(client_socket, "Connection: close\r\n", 19, 0);
-    send(client_socket, "\r\n", 2, 0);
-    send(client_socket, response_body, body_length, 0);
-
-    // Close the connection
-    log_request(method, path, status_code);
-    close(client_socket);
 }
 
 void log_request(const char *method, const char *path, int status_code) {
