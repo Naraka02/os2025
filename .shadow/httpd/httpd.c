@@ -19,9 +19,35 @@
 #define BUFFER_SIZE 4096
 #define MAX_PATH_LENGTH 1024
 #define DEFAULT_PORT 8080
+#define MAX_WORKERS 4
+#define QUEUE_SIZE 100
 
-// Revise this.
-void handle_request(int client_socket);
+// Request structure with sequence number for ordered logging
+typedef struct {
+    int client_socket;
+    int seq_number;
+} request_t;
+
+// Global variables for request queue and synchronization
+static request_t request_queue[QUEUE_SIZE];
+static int queue_head = 0;
+static int queue_tail = 0;
+static int queue_count = 0;
+static int next_seq = 0;
+static int next_log_seq = 0;
+
+// Synchronization primitives
+static mutex_t queue_mutex = MUTEX_INIT();
+static mutex_t log_mutex = MUTEX_INIT();
+static cond_t queue_not_empty = COND_INIT();
+static cond_t queue_not_full = COND_INIT();
+static cond_t can_log = COND_INIT();
+
+// Function declarations
+void handle_request_with_seq(int client_socket, int seq);
+void worker_thread(int worker_id);
+void enqueue_request(int client_socket);
+void synchronized_log(const char *method, const char *path, int status_code, int seq);
 
 // Call this.
 void log_request(const char *method, const char *path, int status_code);
@@ -71,7 +97,12 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    printf("Server listening on port %d...\n", port);
+    printf("Server listening on port %d with %d worker threads...\n", port, MAX_WORKERS);
+
+    // Create worker threads
+    for (int i = 0; i < MAX_WORKERS; i++) {
+        spawn(worker_thread);
+    }
 
     // Main server loop - accept and process connections indefinitely
     while (1) {
@@ -92,8 +123,8 @@ int main(int argc, char *argv[]) {
         setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO,
                    (const char*)&timeout, sizeof(timeout));
 
-        // Process the client request
-        handle_request(client_socket);
+        // Add request to queue for worker threads to process
+        enqueue_request(client_socket);
     }
 
     // Clean up (note: this code is never reached in this example)
@@ -101,7 +132,75 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-void handle_request(int client_socket) {
+// Add request to the queue with sequence number
+void enqueue_request(int client_socket) {
+    mutex_lock(&queue_mutex);
+    
+    // Wait for space in queue
+    while (queue_count == QUEUE_SIZE) {
+        cond_wait(&queue_not_full, &queue_mutex);
+    }
+    
+    // Add request to queue with sequence number
+    request_queue[queue_tail].client_socket = client_socket;
+    request_queue[queue_tail].seq_number = next_seq++;
+    queue_tail = (queue_tail + 1) % QUEUE_SIZE;
+    queue_count++;
+    
+    // Signal that queue is not empty
+    cond_signal(&queue_not_empty);
+    mutex_unlock(&queue_mutex);
+}
+
+// Get request from queue
+request_t dequeue_request() {
+    mutex_lock(&queue_mutex);
+    
+    // Wait for request in queue
+    while (queue_count == 0) {
+        cond_wait(&queue_not_empty, &queue_mutex);
+    }
+    
+    // Get request from queue
+    request_t req = request_queue[queue_head];
+    queue_head = (queue_head + 1) % QUEUE_SIZE;
+    queue_count--;
+    
+    // Signal that queue is not full
+    cond_signal(&queue_not_full);
+    mutex_unlock(&queue_mutex);
+    return req;
+}
+
+// Synchronized logging to maintain request order
+void synchronized_log(const char *method, const char *path, int status_code, int seq) {
+    mutex_lock(&log_mutex);
+    
+    // Wait until it's this request's turn to log
+    while (seq != next_log_seq) {
+        cond_wait(&can_log, &log_mutex);
+    }
+    
+    // Log the request
+    log_request(method, path, status_code);
+    
+    // Update next sequence and signal others
+    next_log_seq++;
+    cond_broadcast(&can_log);
+    
+    mutex_unlock(&log_mutex);
+}
+
+// Worker thread function
+void worker_thread(int worker_id) {
+    while (1) {
+        // Get request from queue
+        request_t req = dequeue_request();
+        handle_request_with_seq(req.client_socket, req.seq_number);
+    }
+}
+
+void handle_request_with_seq(int client_socket, int seq) {
     char buffer[BUFFER_SIZE];
     int bytes_received;
     int status_code = 200; // Default status code
@@ -121,6 +220,7 @@ void handle_request(int client_socket) {
         // Invalid request format
         const char *response = "HTTP/1.1 404 Not Found\r\n\r\nInvalid request";
         send(client_socket, response, strlen(response), 0);
+        synchronized_log("", "", 404, seq);
         close(client_socket);
         return;
     }
@@ -130,6 +230,7 @@ void handle_request(int client_socket) {
         // Not a CGI request, return 404
         const char *response = "HTTP/1.1 404 Not Found\r\n\r\nNot a CGI request";
         send(client_socket, response, strlen(response), 0);
+        synchronized_log(method, path, 404, seq);
         close(client_socket);
         return;
     }
@@ -159,7 +260,6 @@ void handle_request(int client_socket) {
     if (pipe(pipe_fd) < 0) {
         perror("Pipe creation failed");
         status_code = 500; // Internal Server Error
-        close(client_socket);
         goto send_error;
     }
 
@@ -171,7 +271,6 @@ void handle_request(int client_socket) {
         status_code = 500; // Internal Server Error
         close(pipe_fd[0]);
         close(pipe_fd[1]);
-        close(client_socket);
         goto send_error;
     }
 
@@ -234,19 +333,19 @@ void handle_request(int client_socket) {
         // Send response
         send(client_socket, cgi_output, output_length, 0);
             
-        // Log the request
-        log_request(method, path, status_code);
+        // Log the request with sequence number
+        synchronized_log(method, path, status_code, seq);
 
         close(client_socket);
         return;
 
-send_error:
+    send_error:
         // Send error response if CGI execution failed
         char error_response[256];
         sprintf(error_response, "HTTP/1.1 %d %s\r\n\r\nError executing CGI script", 
                status_code, status_code == 500 ? "Internal Server Error" : "Bad Request");
         send(client_socket, error_response, strlen(error_response), 0);
-        log_request(method, path, status_code);
+        synchronized_log(method, path, status_code, seq);
         close(client_socket);
         return;
     }
