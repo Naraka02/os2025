@@ -193,6 +193,10 @@ void handle_request(int client_socket) {
         // Parent process: close the write end of the pipe
         close(pipe_fd[1]);
 
+        // Wait for the child process to finish
+        int status;
+        waitpid(pid, &status, 0);
+
         // Read output from the CGI script
         char cgi_output[BUFFER_SIZE];
         int output_length = 0;
@@ -204,10 +208,6 @@ void handle_request(int client_socket) {
 
         close(pipe_fd[0]);
         cgi_output[output_length] = '\0';
-
-        // Wait for the child process to finish
-        int status;
-        waitpid(pid, &status, 0);
 
         if (!WIFEXITED(status)) {
             status_code = status;
