@@ -88,17 +88,50 @@ void layernorm_forward(float* out, float* mean, float* rstd,
 void matmul_forward(float* out,
                     float* inp, float* weight, float* bias,
                     int B, int T, int C, int OC) {
-    // most of the running time is spent here and in matmul_backward
-    // OC is short for "output channels"
-    // inp is (B,T,C), weight is (OC, C), bias is (OC)
-    // out will be (B,T,OC)
+    matmul_forward_params = (MatmulForwardParams){
+        .out = out, .inp = inp, .weight = weight, .bias = bias,
+        .B = B, .T = T, .C = C, .OC = OC,
+    };
+    for (int i = 0; i < N_THREADS; i++) {
+        spawn(matmul_forward_worker);
+    }
+    join();
+}
+
+typedef struct MatmulForwardParams {
+    float* out;
+    float* inp;
+    float* weight;
+    float* bias;
+    int B;
+    int T;
+    int C;
+    int OC;
+} MatmulForwardParams;
+
+MatmulForwardParams matmul_forward_params;
+
+void matmul_forward_worker(int id) {
+    MatmulForwardParams* params = &matmul_forward_params;
+    float* out = params->out;
+    float* inp = params->inp;
+    float* weight = params->weight;
+    float* bias = params->bias;
+    int B = params->B;
+    int T = params->T;
+    int C = params->C;
+    int OC = params->OC;
+
+    int o_start = (id - 1) * OC / N_THREADS;
+    int o_end = id * OC / N_THREADS;
+
     for (int b = 0; b < B; b++) {
         for (int t = 0; t < T; t++) {
             float* out_bt = out + b * T * OC + t * OC;
             float* inp_bt = inp + b * T * C + t * C;
-            for (int o = 0; o < OC; o++) {
+            for (int o = o_start; o < o_end; o++) {
                 float val = (bias != NULL) ? bias[o] : 0.0f;
-                float* wrow = weight + o*C;
+                float* wrow = weight + o * C;
                 for (int i = 0; i < C; i++) {
                     val += inp_bt[i] * wrow[i];
                 }
