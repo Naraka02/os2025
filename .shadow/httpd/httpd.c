@@ -135,7 +135,7 @@ void handle_request(int client_socket) {
     }
 
     // Extract the CGI script name
-    char script_name[MAX_PATH_LENGTH];
+    char script_name[MAX_PATH_LENGTH - 10];
     snprintf(script_name, sizeof(script_name), "%s", path + 9); // Skip "/cgi-bin/"
 
     // Check for query string
