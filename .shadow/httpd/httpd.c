@@ -209,7 +209,7 @@ void handle_request(int client_socket) {
         waitpid(pid, &status, 0);
 
         if (WIFEXITED(status) != 0) {
-            status_code = 501;
+            status_code =WIFEXITED(status);
             goto send_error;
         }
 
@@ -222,7 +222,7 @@ void handle_request(int client_socket) {
             char *status_start = cgi_output;
             // Skip past "HTTP/1.x "
             while (*status_start && *status_start != ' ') status_start++;
-            if (*status_start) status_start++; // Skip the space
+            if (*status_start) status_start++;
             
             // Extract the status code
             if (isdigit(*status_start)) {
