@@ -215,7 +215,7 @@ void handle_request(int client_socket) {
             status_code = 500; // Internal server error if abnormal termination
         }
 
-        // // Send response
+        // Send response
         // char status_line[64];
         // sprintf(status_line, "HTTP/1.1 %d %s\r\n", 
         //            status_code, status_code == 200 ? "OK" : "Internal Server Error");
