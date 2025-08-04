@@ -209,8 +209,7 @@ void handle_request(int client_socket) {
         waitpid(pid, &status, 0);
 
         if (WIFEXITED(status) != 0) {
-            // If the script exited with non-zero status, use 500
-            status_code = 500;
+            status_code = 501;
             goto send_error;
         }
 
