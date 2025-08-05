@@ -30,8 +30,12 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void fat32_name_to_string(const uint8_t *fat_name, char *output);
 void get_long_filename(struct fat32dent *entries, int entry_index, char *long_name);
-void recover_formatted_bmps(struct fat32hdr *hdr);
+void recover_bmps(struct fat32hdr *hdr);
 int extract_bmp_from_cluster(struct fat32hdr *hdr, uint32_t cluster_num, uint32_t offset_in_cluster);
+void try_extract_filename_from_bmp(uint8_t *bmp_data, uint32_t bmp_size, char *extracted_name);
+void scan_for_deleted_entries(struct fat32hdr *hdr);
+void scan_deleted_in_cluster(struct fat32hdr *hdr, uint32_t cluster_num);
+void extract_deleted_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char *filename);
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -47,12 +51,12 @@ int main(int argc, char *argv[]) {
     struct fat32hdr *hdr = map_disk(argv[1]);
 
     init_globals(hdr);
-
-    // Try normal directory scanning first
-    scan_directory(hdr, hdr->BPB_RootClus, "/");
     
-    // If filesystem is formatted, try cluster-by-cluster recovery
-    recover_formatted_bmps(hdr);
+    // First try to find deleted directory entries
+    scan_for_deleted_entries(hdr);
+    
+    // Then scan for BMP signatures in data area
+    recover_bmps(hdr);
 
     // file system traversal
     munmap(hdr, hdr->BPB_TotSec32 * hdr->BPB_BytsPerSec);
@@ -440,17 +444,42 @@ int extract_bmp_from_cluster(struct fat32hdr *hdr, uint32_t cluster_num, uint32_
     
     // Verify we read the complete file
     if (bytes_read >= bmp_size) {
+        // Try to extract filename from BMP metadata
+        char extracted_name[256] = {0};
+        try_extract_filename_from_bmp(bmp_data, bmp_size, extracted_name);
+        
         // Calculate SHA1
         char sha1_str[41];
         calculate_sha1(bmp_data, bmp_size, sha1_str);
         
-        // Generate filename based on cluster location
+        // Generate filename based on available information
         char filename[256];
-        snprintf(filename, sizeof(filename), "recovered_cluster_%u_offset_%u.bmp", 
-                cluster_num, offset_in_cluster);
+        if (strlen(extracted_name) > 0) {
+            snprintf(filename, sizeof(filename), "%s", extracted_name);
+        } else {
+            snprintf(filename, sizeof(filename), "recovered_cluster_%u_offset_%u.bmp", 
+                    cluster_num, offset_in_cluster);
+        }
         
-        printf("%s  %s\n", sha1_str, filename);
-        fflush(stdout);
+        // Create output directory
+        mkdir("recovered_bmps", 0755);
+        
+        // Generate output file path
+        char output_path[512];
+        snprintf(output_path, sizeof(output_path), "recovered_bmps/%s_%s", 
+                sha1_str, filename);
+        
+        // Write the recovered BMP file
+        FILE *outfile = fopen(output_path, "wb");
+        if (outfile) {
+            fwrite(bmp_data, 1, bmp_size, outfile);
+            fclose(outfile);
+            
+            printf("%s  %s\n", sha1_str, filename);
+            fflush(stdout);
+        } else {
+            printf("Failed to write recovered file: %s\n", output_path);
+        }
         
         free(bmp_data);
         return 1; // Successfully extracted
@@ -461,7 +490,7 @@ int extract_bmp_from_cluster(struct fat32hdr *hdr, uint32_t cluster_num, uint32_
 }
 
 // Scan all data clusters for BMP file signatures
-void recover_formatted_bmps(struct fat32hdr *hdr) {
+void recover_bmps(struct fat32hdr *hdr) {
     printf("Scanning for BMP files in formatted filesystem...\n");
     
     uint32_t recovered_count = 0;
@@ -486,6 +515,170 @@ void recover_formatted_bmps(struct fat32hdr *hdr) {
             }
         }
     }
+}
+
+// Try to extract filename from BMP metadata or other sources
+void try_extract_filename_from_bmp(uint8_t *bmp_data, uint32_t bmp_size, char *extracted_name) {
+    extracted_name[0] = '\0';
     
-    printf("Recovered %u BMP files from formatted filesystem\n", recovered_count);
+    // BMP files don't typically contain filename metadata in the header
+    // But we can look for common patterns or embedded strings
+    
+    // Look for strings that might be filenames in the first 1KB of the file
+    uint32_t search_limit = (bmp_size > 1024) ? 1024 : bmp_size;
+    
+    for (uint32_t i = 54; i < search_limit - 8; i++) {
+        // Look for potential filename patterns (ASCII strings ending in .bmp)
+        if (bmp_data[i] >= 32 && bmp_data[i] <= 126) { // Printable ASCII
+            char temp_str[256] = {0};
+            int str_len = 0;
+            
+            // Extract potential string
+            for (uint32_t j = i; j < search_limit && str_len < 255; j++) {
+                if (bmp_data[j] >= 32 && bmp_data[j] <= 126) {
+                    temp_str[str_len++] = bmp_data[j];
+                } else {
+                    break;
+                }
+            }
+            
+            // Check if it looks like a filename
+            if (str_len >= 8 && str_len <= 100) {
+                char *dot = strrchr(temp_str, '.');
+                if (dot && strcasecmp(dot, ".bmp") == 0) {
+                    // Found potential filename
+                    strncpy(extracted_name, temp_str, 255);
+                    extracted_name[255] = '\0';
+                    return;
+                }
+            }
+        }
+    }
+}
+
+// Scan for deleted directory entries to recover original filenames
+void scan_for_deleted_entries(struct fat32hdr *hdr) {
+    printf("Searching for deleted directory entries...\n");
+    
+    // Scan root directory and subdirectories for deleted entries
+    scan_deleted_in_cluster(hdr, hdr->BPB_RootClus);
+    
+    // Also scan some random clusters that might contain old directory data
+    for (uint32_t cluster = 2; cluster < g_total_clusters + 2; cluster += 10) {
+        scan_deleted_in_cluster(hdr, cluster);
+    }
+}
+
+// Helper function to scan a specific cluster for deleted entries
+void scan_deleted_in_cluster(struct fat32hdr *hdr, uint32_t cluster_num) {
+    if (cluster_num < 2) return;
+    
+    void *cluster_data = get_cluster_data(hdr, cluster_num);
+    if (!cluster_data) return;
+    
+    struct fat32dent *entries = (struct fat32dent *)cluster_data;
+    
+    for (uint32_t i = 0; i < g_entries_per_cluster; i++) {
+        struct fat32dent *entry = &entries[i];
+        
+        // Look for deleted entries (first byte is 0xE5)
+        if (entry->DIR_Name[0] == 0xE5) {
+            // Skip long file name entries
+            if ((entry->DIR_Attr & 0x0F) == 0x0F) continue;
+            
+            // Skip directories
+            if (entry->DIR_Attr & ATTR_DIRECTORY) continue;
+            
+            // Check if it might be a BMP file
+            char filename[256];
+            fat32_name_to_string(entry->DIR_Name, filename);
+            
+            if (is_bmp_file(filename)) {
+                // Try to recover this deleted BMP file
+                uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
+                uint32_t file_size = entry->DIR_FileSize;
+                
+                if (start_cluster >= 2 && file_size > 0) {
+                    // Restore first character of filename (commonly lost)
+                    entry->DIR_Name[0] = '?'; // Replace with placeholder
+                    fat32_name_to_string(entry->DIR_Name, filename);
+                    
+                    printf("Found deleted BMP: %s (cluster %u, size %u)\n", 
+                           filename, start_cluster, file_size);
+                    
+                    // Try to extract the file
+                    extract_deleted_bmp_file(hdr, entry, filename);
+                }
+            }
+        }
+    }
+}
+
+// Extract a deleted BMP file
+void extract_deleted_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char *filename) {
+    uint32_t file_size = entry->DIR_FileSize;
+    uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
+    
+    if (file_size == 0 || start_cluster < 2) {
+        return;
+    }
+    
+    // Store file data in memory
+    uint8_t *file_data = malloc(file_size);
+    if (!file_data) {
+        printf("Memory allocation failed for deleted file extraction\n");
+        return;
+    }
+    
+    // Read data sequentially (FAT chain might be corrupted)
+    uint32_t bytes_read = 0;
+    uint32_t current_cluster = start_cluster;
+    
+    while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
+        void *cluster_data = get_cluster_data(hdr, current_cluster);
+        if (!cluster_data) break;
+        
+        uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
+                                g_cluster_size : (file_size - bytes_read);
+        
+        memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
+        bytes_read += bytes_to_copy;
+        
+        // Try to follow FAT chain, but if it's broken, try sequential clusters
+        uint32_t next_cluster = get_next_cluster(g_fat_table, current_cluster);
+        if (next_cluster >= 2 && next_cluster < g_total_clusters + 2) {
+            current_cluster = next_cluster;
+        } else {
+            current_cluster++; // Try next sequential cluster
+        }
+    }
+    
+    // Verify BMP header
+    if (bytes_read >= 14 && file_data[0] == 'B' && file_data[1] == 'M') {
+        // Calculate SHA1
+        char sha1_str[41];
+        calculate_sha1(file_data, bytes_read, sha1_str);
+        
+        // Create output directory
+        mkdir("recovered_bmps", 0755);
+        
+        // Generate output file path
+        char output_path[512];
+        snprintf(output_path, sizeof(output_path), "recovered_bmps/%s_deleted_%s", 
+                sha1_str, filename);
+        
+        // Write the recovered BMP file
+        FILE *outfile = fopen(output_path, "wb");
+        if (outfile) {
+            fwrite(file_data, 1, bytes_read, outfile);
+            fclose(outfile);
+            
+            printf("%s  deleted_%s\n", sha1_str, filename);
+            fflush(stdout);
+        } else {
+            printf("Failed to write recovered deleted file: %s\n", output_path);
+        }
+    }
+    
+    free(file_data);
 }
