@@ -252,7 +252,7 @@ void extract_bmp(uint32_t cluster_num) {
             uint8_t first_byte = *(uint8_t *)cluster_data_file;
             printf("First byte: 0x%02X (%c)\n", first_byte, 
                    (first_byte >= 32 && first_byte <= 126) ? first_byte : '.');
-            uint8_t second_byte = *(uint8_t *)(cluster_data_file + 4);  
+            uint8_t second_byte = *(uint8_t *)(cluster_data_file + 8);  
             printf("Second byte: 0x%02X (%c)\n", second_byte, 
                    (second_byte >= 32 && second_byte <= 126) ? second_byte : '.');
         }
