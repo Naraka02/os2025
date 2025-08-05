@@ -24,6 +24,7 @@ void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num);
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void carve_bmps(struct fat32hdr *hdr);
 void extract_bmp(void *cluster_data, uint32_t cluster_num);
+uint32_t get_next_cluster(uint32_t cluster);
 int is_bmp_extension(const char *filename);
 
 int main(int argc, char *argv[]) {
@@ -157,6 +158,26 @@ void calculate_sha1(const void *data, size_t len, char *sha1_str) {
     unlink(temp_filename);
 }
 
+uint32_t get_next_cluster(uint32_t cluster) {
+    if (cluster < 2 || cluster >= g_total_clusters + 2) {
+        return 0x0FFFFFFF; // End of chain
+    }
+    
+    uint32_t fat_entry = g_fat_table[cluster] & 0x0FFFFFFF;
+    
+    // Check for end of chain markers
+    if (fat_entry >= 0x0FFFFFF8) {
+        return 0x0FFFFFFF; // End of chain
+    }
+    
+    // Check for bad cluster
+    if (fat_entry == 0x0FFFFFF7) {
+        return 0x0FFFFFFF; // Bad cluster, treat as end
+    }
+    
+    return fat_entry;
+}
+
 // Extract long filename from a single LFN entry
 void extract_single_lfn(uint8_t *lfn_data, char *partial_name) {
     int char_count = 0;
@@ -218,9 +239,7 @@ void extract_bmp(void *cluster_data, uint32_t cluster_num) {
                 strcat(temp, filename);
                 strcpy(filename, temp);
             }
-        }
-        // Check for regular directory entries
-        else if (entry->DIR_Name[0] != 0xE5 || entry->DIR_Name[0] == 0xE5) {      
+        } else if (entry->DIR_Name[0] != 0xE5 || entry->DIR_Name[0] == 0xE5) {      
             uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
             uint32_t file_size = entry->DIR_FileSize;
 
@@ -241,7 +260,10 @@ void extract_bmp(void *cluster_data, uint32_t cluster_num) {
                             
                             memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
                             bytes_read += bytes_to_copy;
-                            current_cluster++;
+                            
+                            // Get next cluster from FAT
+                            current_cluster = get_next_cluster(current_cluster);
+                            if (current_cluster == 0x0FFFFFFF) break; // End of chain
                         }
                         
                         if (bytes_read >= file_size && bytes_read >= 14 && 
