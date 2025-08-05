@@ -23,8 +23,10 @@ uint32_t *get_fat_table(struct fat32hdr *hdr);
 void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num);
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void carve_bmps(struct fat32hdr *hdr);
-void extract_bmp(void *cluster_data, uint32_t cluster_num);
+void extract_bmp(uint32_t cluster_num);
+uint32_t get_next_cluster(uint32_t cluster);
 int is_bmp_extension(const char *filename);
+int is_directory_cluster(uint32_t cluster);
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -189,102 +191,45 @@ int is_bmp_extension(const char *filename) {
     return (strcasecmp(ext, ".bmp") == 0);
 }
 
-void extract_bmp(void *cluster_data, uint32_t cluster_num) {
+void extract_bmp(uint32_t cluster_num) {
+    void *cluster_data = get_cluster_data(g_hdr, cluster_num);
+    if (!cluster_data) return;
+
     struct fat32dent *entries = (struct fat32dent *)cluster_data;
     char filename[256] = "";
     
-    for (uint32_t i = 0; i < g_entries_per_cluster; i++) {
-        struct fat32dent *entry = &entries[i];
-        uint8_t *entry_data = (uint8_t *)entry;
-        
-        // Skip empty entries
-        if (entry->DIR_Name[0] == 0x00) break;
-        
-        // Check if this is an LFN entry
-        if ((entry->DIR_Attr & 0x0F) == 0x0F) {
-            uint8_t is_last = (entry_data[0] & 0x40) ? 1 : 0;
-            
-            char partial_name[256];
-            extract_single_lfn(entry_data, partial_name);
-            
-            // If this is the first LFN entry (highest sequence number), start fresh
-            if (is_last) {
-                strcpy(filename, partial_name);
-            } else {
-                // Prepend this fragment to build the complete name
-                char temp[256];
-                strcpy(temp, partial_name);
-                strcat(temp, filename);
-                strcpy(filename, temp);
-            }
-        } else  {      
-            uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
-            uint32_t file_size = entry->DIR_FileSize;
-
-            if (is_bmp_extension(filename)) {
-                if (start_cluster >= 2 && file_size > 0) {
-                    uint8_t *file_data = malloc(file_size);
-                    
-                    uint32_t bytes_read = 0;
-                    uint32_t current_cluster = start_cluster;
-                        
-                    // Read clusters sequentially 
-                    while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
-                        void *cluster_data = get_cluster_data(g_hdr, current_cluster);
-                        if (!cluster_data) break;
-                        
-                        uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
-                                                g_cluster_size : (file_size - bytes_read);
-                        
-                        memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
-                        bytes_read += bytes_to_copy;
-                            
-                        current_cluster++;
-                    }
-                        
-                    if (bytes_read >= file_size && bytes_read >= 14 && 
-                        file_data[0] == 'B' && file_data[1] == 'M') {
-                        char sha1_str[41];
-                        calculate_sha1(file_data, bytes_read, sha1_str);
-                        printf("%s  %s\n", sha1_str, filename);
-                    }
-                        
-                    free(file_data);
-                }
-            }
-            
-            filename[0] = '\0';
-        }
-    }
+    printf("entry %s\n", entries->DIR_Name);
 }
 
 void carve_bmps(struct fat32hdr *hdr) {
     for (uint32_t cluster = 2; cluster < g_total_clusters + 2; cluster++) {
+        if (!is_directory_cluster(cluster)) {
+            continue;
+        }
+
         void *cluster_data = get_cluster_data(hdr, cluster);
         if (!cluster_data) continue;
         
-        struct fat32dent *entries = (struct fat32dent *)cluster_data;
-        
-        // Check for lfn entries
-        int has_lfn_entries = 0;
-        
-        for (uint32_t i = 0; i < g_entries_per_cluster && i < 4; i++) {
-            struct fat32dent *entry = &entries[i];
-            
-            // Skip empty entries
-            if (entry->DIR_Name[0] == 0x00) break;
-            
-            // Check for LFN entries or valid directory entries
-            if ((entry->DIR_Attr & 0x0F) == 0x0F ||  // LFN entry
-                (entry->DIR_Name[0] != 0xE5 && 
-                 (entry->DIR_Attr & (ATTR_DIRECTORY | ATTR_ARCHIVE)))) {
-                has_lfn_entries = 1;
-                break;
-            }
-        }
-        
-        if (has_lfn_entries) {
-            extract_bmp(cluster_data, cluster);
+        // Process this directory cluster
+        extract_bmp(cluster);
+    }
+}
+
+int is_directory_cluster(uint32_t cluster) {
+    void *cluster_data = get_cluster_data(g_hdr, cluster);
+    if (!cluster_data) return 0;
+
+    uint8_t *data = (uint8_t *)cluster_data;
+    int bmp_count = 0;
+    
+    // Search for 'bmp' string in the cluster (case insensitive)
+    for (uint32_t i = 0; i < g_cluster_size - 2; i++) {
+        if ((data[i] == 'b' || data[i] == 'B') &&
+            (data[i+1] == 'm' || data[i+1] == 'M') &&
+            (data[i+2] == 'p' || data[i+2] == 'P')) {
+            bmp_count++;
         }
     }
+    
+    return (bmp_count >= 2);
 }
