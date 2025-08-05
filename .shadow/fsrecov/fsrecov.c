@@ -48,8 +48,7 @@ int main(int argc, char *argv[]) {
     printf("=== Directory Information Recovery ===\n");
     carve_directory_info(hdr);
     
-    printf("\n=== BMP File Carving ===\n");
-    carve_bmp_files(hdr);
+
 
     // file system traversal
     munmap(hdr, hdr->BPB_TotSec32 * hdr->BPB_BytsPerSec);
