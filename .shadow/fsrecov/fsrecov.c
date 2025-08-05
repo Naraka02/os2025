@@ -211,6 +211,7 @@ void extract_bmp(uint32_t cluster_num) {
             char long_filename[256] = "";
             int lfn_start = i - 1;
             
+            printf("Processing entry: %.*s\n", 11, entry->DIR_Name);
             // Search for LFN entries backwards
             while (lfn_start >= 0) {
                 struct fat32dent *lfn_entry = &entries[lfn_start];
