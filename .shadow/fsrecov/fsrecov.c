@@ -238,7 +238,7 @@ void extract_carved_bmp(struct fat32hdr *hdr, uint32_t start_cluster, uint32_t f
         fflush(stdout);
         
         // Optionally save the file (uncomment if needed)
-        /*
+        
         mkdir("recovered_bmps", 0755);
         char output_path[512];
         snprintf(output_path, sizeof(output_path), "recovered_bmps/%s", filename);
@@ -248,7 +248,7 @@ void extract_carved_bmp(struct fat32hdr *hdr, uint32_t start_cluster, uint32_t f
             fwrite(file_data, 1, file_size, outfile);
             fclose(outfile);
         }
-        */
+        
     }
     
     free(file_data);
@@ -265,14 +265,7 @@ void carve_bmp_files(struct fat32hdr *hdr) {
         // Check if this cluster starts with a BMP signature
         if (is_valid_bmp_header(data, g_cluster_size)) {
             uint32_t file_size = *(uint32_t*)(data + 2);
-            
             extract_carved_bmp(hdr, cluster, file_size);
-        }
-        
-        // Progress indicator for large filesystems
-        if (cluster % 1000 == 0) {
-            printf("Scanned %u/%u clusters...\r", cluster - 2, g_total_clusters);
-            fflush(stdout);
         }
     }
 
