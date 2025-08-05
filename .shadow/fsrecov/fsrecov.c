@@ -196,7 +196,7 @@ void get_long_filename(struct fat32dent *entries, int entry_index, char *long_na
     // Reverse the collected name and copy to output
     if (total_chars > 0) {
         for (int i = 0; i < total_chars; i++) {
-            long_name[i] = temp_name[total_chars - 1 - i];
+            long_name[i] = temp_name[i];
         }
         long_name[total_chars] = '\0';
     }
