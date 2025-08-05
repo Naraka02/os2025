@@ -245,8 +245,14 @@ void extract_bmp(uint32_t cluster_num) {
         
         uint32_t bytes_read = 0;
         uint32_t current_cluster = start_cluster;
+        
+        // Read the first byte of the first cluster
         void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
-        printf("%c\n", *(char *)cluster_data_file[0]);
+        if (cluster_data_file) {
+            uint8_t first_byte = *(uint8_t *)cluster_data_file;
+            printf("First byte: 0x%02X (%c)\n", first_byte, 
+                   (first_byte >= 32 && first_byte <= 126) ? first_byte : '.');
+        }
         
         while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
             cluster_data_file = get_cluster_data(g_hdr, current_cluster);
