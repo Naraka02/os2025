@@ -233,6 +233,7 @@ void extract_bmp(uint32_t cluster_num) {
         }
         
         for (int j = fragment_count - 1; j >= 0; j--) {
+            printf("%s %s\n", filename, lfn_fragments[j]);
             strcat(filename, lfn_fragments[j]);
         }
         
