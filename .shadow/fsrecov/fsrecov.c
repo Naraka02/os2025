@@ -26,9 +26,10 @@ uint32_t get_next_cluster(uint32_t *fat_table, uint32_t cluster_num);
 void recover_bmp_files(struct fat32hdr *hdr);
 void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path);
 int is_bmp_file(const char *filename);
-void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char *path);
+void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char *path, const char *filename);
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void fat32_name_to_string(const uint8_t *fat_name, char *output);
+void get_long_filename(struct fat32dent *entries, int entry_index, char *long_name);
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -145,6 +146,63 @@ void fat32_name_to_string(const uint8_t *fat_name, char *output) {
     output[j] = '\0';
 }
 
+// Extract long filename from LFN entries
+void get_long_filename(struct fat32dent *entries, int entry_index, char *long_name) {
+    long_name[0] = '\0';
+    
+    // Look backwards for LFN entries
+    int lfn_index = entry_index - 1;
+    char temp_name[256] = {0};
+    int total_chars = 0;
+    
+    // Collect LFN entries in reverse order
+    while (lfn_index >= 0) {
+        struct fat32dent *lfn_entry = &entries[lfn_index];
+        
+        // Check if this is an LFN entry
+        if ((lfn_entry->DIR_Attr & 0x0F) != 0x0F) {
+            break;
+        }
+        
+        // Extract characters from LFN entry
+        uint8_t *lfn_data = (uint8_t *)lfn_entry;
+        uint8_t sequence = lfn_data[0] & 0x1F;  // Sequence number
+        
+        // Extract Unicode characters and convert to ASCII (simplified)
+        // Characters are stored at offsets 1-10, 14-25, 28-31
+        for (int i = 1; i <= 10; i += 2) {
+            if (lfn_data[i] != 0 && lfn_data[i] != 0xFF) {
+                temp_name[total_chars++] = lfn_data[i];
+            }
+        }
+        for (int i = 14; i <= 25; i += 2) {
+            if (lfn_data[i] != 0 && lfn_data[i] != 0xFF) {
+                temp_name[total_chars++] = lfn_data[i];
+            }
+        }
+        for (int i = 28; i <= 31; i += 2) {
+            if (lfn_data[i] != 0 && lfn_data[i] != 0xFF) {
+                temp_name[total_chars++] = lfn_data[i];
+            }
+        }
+        
+        // Check if this is the last LFN entry
+        if (lfn_data[0] & 0x40) {
+            break;
+        }
+        
+        lfn_index--;
+    }
+    
+    // Reverse the collected name and copy to output
+    if (total_chars > 0) {
+        for (int i = 0; i < total_chars; i++) {
+            long_name[i] = temp_name[total_chars - 1 - i];
+        }
+        long_name[total_chars] = '\0';
+    }
+}
+
 int is_bmp_file(const char *filename) {
     size_t len = strlen(filename);
     if (len < 4) return 0;
@@ -198,7 +256,7 @@ void calculate_sha1(const void *data, size_t len, char *sha1_str) {
     unlink(temp_filename);
 }
 
-void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char *path) {
+void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char *path, const char *filename) {
     uint32_t file_size = entry->DIR_FileSize;
     uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
     
@@ -232,9 +290,6 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
     
     // Check BMP header
     if (bytes_read >= 14 && file_data[0] == 'B' && file_data[1] == 'M') {
-        char filename[256];
-        fat32_name_to_string(entry->DIR_Name, filename);
-        
         // Calculate SHA1 hash
         char sha1_str[41]; // 40 characters + null terminator
         calculate_sha1(file_data, bytes_read, sha1_str);
@@ -242,7 +297,7 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
         // Create output directory
         mkdir("recovered_bmps", 0755);
         
-        // Generate output file path
+        // Generate output file path using the provided filename
         char output_path[512];
         snprintf(output_path, sizeof(output_path), "recovered_bmps/%s_%s", 
                 sha1_str, filename);
@@ -253,7 +308,7 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
             fwrite(file_data, 1, bytes_read, outfile);
             fclose(outfile);
             
-            printf("%s %s\n ", sha1_str, filename);
+            printf("%s %s%s\n", sha1_str, path, filename);
         } else {
             printf("Failed to write recovered file: %s\n", output_path);
         }
@@ -280,14 +335,24 @@ void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path
             if (entry->DIR_Name[0] == 0x00) break;
             if (entry->DIR_Name[0] == 0xE5) continue;
             
-            // Skip long file name entries
+            // Skip long file name entries (we'll process them when we hit the actual file entry)
             if ((entry->DIR_Attr & 0x0F) == 0x0F) continue;
             
             // Skip "." and ".." entries
             if (entry->DIR_Name[0] == '.') continue;
             
             char filename[256];
-            fat32_name_to_string(entry->DIR_Name, filename);
+            char long_filename[256];
+            
+            // Try to get long filename first
+            get_long_filename(entries, i, long_filename);
+            
+            if (strlen(long_filename) > 0) {
+                strcpy(filename, long_filename);
+            } else {
+                // Fall back to short filename
+                fat32_name_to_string(entry->DIR_Name, filename);
+            }
             
             if (entry->DIR_Attr & ATTR_DIRECTORY) {
                 // Scan subdirectory
@@ -299,7 +364,7 @@ void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path
                 }
             } else {
                 if (is_bmp_file(filename)) {
-                    extract_bmp_file(hdr, entry, path);
+                    extract_bmp_file(hdr, entry, path, filename);
                 }
             }
         }
