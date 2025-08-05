@@ -258,7 +258,7 @@ void extract_bmp(uint32_t cluster_num) {
                 }
             }
             
-            const char *display_name = (strlen(long_filename) > 0) ? long_filename : short_name;
+            const char *display_name =  short_name;
             
             if (is_bmp_extension(display_name) || is_bmp_extension(short_name)) {
                 if (start_cluster >= 2 && file_size > 0) {
