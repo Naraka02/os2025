@@ -166,16 +166,13 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
     
     uint8_t *current_bytes = (uint8_t *)current_data;
     
-    // 获取当前cluster最后一行的像素值（假设每行有合理的字节数）
-    // 对于BMP，我们检查cluster末尾的一行像素
-    uint32_t bytes_per_row = 64; // 假设每行64字节（可根据BMP格式调整）
+    uint32_t bytes_per_row = 64;
     uint32_t last_row_start = g_cluster_size - bytes_per_row;
     if (last_row_start >= g_cluster_size) last_row_start = g_cluster_size - bytes_per_row;
     
     uint32_t best_cluster = current_cluster + 1;
     uint32_t min_diff = UINT32_MAX;
-    
-    // 搜索范围：优先检查连续的，然后检查附近的cluster
+
     uint32_t search_range[] = {1, 2, 3, 4, 5, -1, -2, -3, 6, 7, 8, 9, 10, -4, -5};
     int search_count = sizeof(search_range) / sizeof(search_range[0]);
     
@@ -190,8 +187,7 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
         if (!candidate_data) continue;
         
         uint8_t *candidate_bytes = (uint8_t *)candidate_data;
-        
-        // 计算当前cluster最后一行与候选cluster第一行的像素差值
+
         uint32_t total_diff = 0;
         uint32_t valid_pixels = 0;
         
@@ -200,7 +196,6 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
                 uint8_t current_pixel = current_bytes[last_row_start + j];
                 uint8_t candidate_pixel = candidate_bytes[j];
                 
-                // 计算像素差值
                 uint32_t diff = abs((int)current_pixel - (int)candidate_pixel);
                 total_diff += diff;
                 valid_pixels++;
@@ -209,14 +204,12 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
         
         if (valid_pixels > 0) {
             uint32_t avg_diff = total_diff / valid_pixels;
-            
-            // 额外检查：确保候选cluster包含合理的数据
+
             int non_zero_count = 0;
             for (uint32_t k = 0; k < 64; k++) {
                 if (candidate_bytes[k] != 0) non_zero_count++;
             }
             
-            // 如果差值更小且包含合理数据，选择这个cluster
             if (avg_diff < min_diff && non_zero_count > 8) {
                 min_diff = avg_diff;
                 best_cluster = candidate;
@@ -224,12 +217,10 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
         }
     }
     
-    // 如果找到了合理的匹配（差值不是太大），返回最佳匹配
-    if (min_diff < 128) {  // 阈值可调整
+    if (min_diff < 128) {
         return best_cluster;
     }
     
-    // 否则返回连续的下一个cluster
     return current_cluster + 1;
 }
 
