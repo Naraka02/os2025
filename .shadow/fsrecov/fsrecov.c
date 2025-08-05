@@ -30,6 +30,9 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void fat32_name_to_string(const uint8_t *fat_name, char *output);
 void get_long_filename(struct fat32dent *entries, int entry_index, char *long_name);
+void carve_bmp_files(struct fat32hdr *hdr);
+int is_valid_bmp_header(const uint8_t *data, uint32_t cluster_size);
+void extract_carved_bmp(struct fat32hdr *hdr, uint32_t start_cluster, uint32_t file_size);
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -46,7 +49,13 @@ int main(int argc, char *argv[]) {
 
     init_globals(hdr);
 
+    // Try directory-based recovery first (works if filesystem is intact)
+    printf("=== Directory-based Recovery ===\n");
     scan_directory(hdr, hdr->BPB_RootClus, "/");
+    
+    // Also perform file carving (works even after formatting)
+    printf("\n=== File Carving Recovery ===\n");
+    carve_bmp_files(hdr);
 
     // file system traversal
     munmap(hdr, hdr->BPB_TotSec32 * hdr->BPB_BytsPerSec);
@@ -371,4 +380,157 @@ void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path
         
         current_cluster = get_next_cluster(g_fat_table, current_cluster);
     }
+}
+
+// Check if data contains a valid BMP header
+int is_valid_bmp_header(const uint8_t *data, uint32_t cluster_size) {
+    // Check BMP signature
+    if (data[0] != 'B' || data[1] != 'M') {
+        return 0;
+    }
+    
+    // Check if we have enough data for the header
+    if (cluster_size < 54) {  // Minimum BMP header size
+        return 0;
+    }
+    
+    // Extract file size from BMP header (bytes 2-5)
+    uint32_t file_size = *(uint32_t*)(data + 2);
+    
+    // Basic sanity checks
+    if (file_size < 54 || file_size > 100 * 1024 * 1024) {  // Between 54 bytes and 100MB
+        return 0;
+    }
+    
+    // Extract data offset (bytes 10-13)
+    uint32_t data_offset = *(uint32_t*)(data + 10);
+    if (data_offset < 54 || data_offset > file_size) {
+        return 0;
+    }
+    
+    // Extract header size (bytes 14-17)
+    uint32_t header_size = *(uint32_t*)(data + 14);
+    if (header_size < 40) {  // Minimum DIB header size
+        return 0;
+    }
+    
+    // Extract width and height (bytes 18-21 and 22-25)
+    int32_t width = *(int32_t*)(data + 18);
+    int32_t height = *(int32_t*)(data + 22);
+    
+    if (width <= 0 || height == 0 || width > 10000 || abs(height) > 10000) {
+        return 0;
+    }
+    
+    return 1;
+}
+
+// Extract a carved BMP file
+void extract_carved_bmp(struct fat32hdr *hdr, uint32_t start_cluster, uint32_t file_size) {
+    static int carved_file_counter = 0;
+    
+    // Allocate memory for the file
+    uint8_t *file_data = malloc(file_size);
+    if (!file_data) {
+        printf("Memory allocation failed for carved file\n");
+        return;
+    }
+    
+    // Read clusters sequentially (we don't have FAT chain info)
+    uint32_t bytes_read = 0;
+    uint32_t current_cluster = start_cluster;
+    
+    while (bytes_read < file_size && current_cluster < g_total_clusters + 2) {
+        void *cluster_data = get_cluster_data(hdr, current_cluster);
+        if (!cluster_data) break;
+        
+        uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
+                                g_cluster_size : (file_size - bytes_read);
+        
+        memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
+        bytes_read += bytes_to_copy;
+        current_cluster++;  // Move to next sequential cluster
+    }
+    
+    // Verify we got the complete file
+    if (bytes_read >= file_size && file_data[0] == 'B' && file_data[1] == 'M') {
+        // Calculate SHA1 hash
+        char sha1_str[41];
+        calculate_sha1(file_data, file_size, sha1_str);
+        
+        // Generate filename based on cluster and counter
+        char filename[256];
+        snprintf(filename, sizeof(filename), "carved_cluster_%u_file_%d.bmp", 
+                start_cluster, ++carved_file_counter);
+        
+        printf("%s  %s\n", sha1_str, filename);
+        fflush(stdout);
+        
+        // Optionally save the file (uncomment if needed)
+        /*
+        mkdir("recovered_bmps", 0755);
+        char output_path[512];
+        snprintf(output_path, sizeof(output_path), "recovered_bmps/%s", filename);
+        
+        FILE *outfile = fopen(output_path, "wb");
+        if (outfile) {
+            fwrite(file_data, 1, file_size, outfile);
+            fclose(outfile);
+        }
+        */
+    }
+    
+    free(file_data);
+}
+
+// File carving: scan all clusters for BMP signatures
+void carve_bmp_files(struct fat32hdr *hdr) {
+    printf("Scanning %u clusters for BMP file signatures...\n", g_total_clusters);
+    
+    uint32_t found_count = 0;
+    
+    // Scan all data clusters
+    for (uint32_t cluster = 2; cluster < g_total_clusters + 2; cluster++) {
+        void *cluster_data = get_cluster_data(hdr, cluster);
+        if (!cluster_data) continue;
+        
+        uint8_t *data = (uint8_t *)cluster_data;
+        
+        // Check if this cluster starts with a BMP signature
+        if (is_valid_bmp_header(data, g_cluster_size)) {
+            // Extract file size from BMP header
+            uint32_t file_size = *(uint32_t*)(data + 2);
+            
+            printf("Found BMP signature at cluster %u, file size: %u bytes\n", 
+                   cluster, file_size);
+            
+            extract_carved_bmp(hdr, cluster, file_size);
+            found_count++;
+        }
+        
+        // Also check for BMP signatures at other offsets within the cluster
+        // (in case a BMP file doesn't start at cluster boundary)
+        for (uint32_t offset = 1; offset < g_cluster_size - 54; offset++) {
+            if (data[offset] == 'B' && data[offset + 1] == 'M') {
+                if (is_valid_bmp_header(data + offset, g_cluster_size - offset)) {
+                    uint32_t file_size = *(uint32_t*)(data + offset + 2);
+                    
+                    printf("Found BMP signature at cluster %u offset %u, file size: %u bytes\n", 
+                           cluster, offset, file_size);
+                    
+                    // For non-aligned BMPs, we'd need more complex extraction
+                    // For now, just report them
+                    found_count++;
+                }
+            }
+        }
+        
+        // Progress indicator for large filesystems
+        if (cluster % 1000 == 0) {
+            printf("Scanned %u/%u clusters...\r", cluster - 2, g_total_clusters);
+            fflush(stdout);
+        }
+    }
+    
+    printf("\nFile carving completed. Found %u potential BMP files.\n", found_count);
 }
