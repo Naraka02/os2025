@@ -172,10 +172,20 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
     
     uint32_t best_cluster = current_cluster + 1;
     uint32_t min_diff = UINT32_MAX;
+
+    uint32_t search_range[] = {1, 2, 3, 4, 5, -1, -2, -3, 6, 7, 8, 9, 10, -4, -5, 
+                              11, 12, 13, 14, 15, -6, -7, -8, 16, 17, 18, 19, 20, 
+                              -9, -10, 21, 22, 23, 24, 25, -11, -12, -13, 26, 27, 
+                              28, 29, 30, -14, -15, 31, 32, 33, 34, 35, -16, -17, 
+                              -18, 36, 37, 38, 39, 40, -19, -20};
+    int search_count = sizeof(search_range) / sizeof(search_range[0]);
     
-    for (int i = 2; i < g_total_clusters + 2; i++) {
-        if (i == current_cluster) continue;
-        uint32_t candidate = i;
+    for (int i = 0; i < search_count; i++) {
+        int32_t offset = search_range[i];
+        uint32_t candidate = (offset > 0) ? current_cluster + offset : 
+                           (current_cluster >= -offset) ? current_cluster + offset : 0;
+        
+        if (candidate < 2 || candidate >= g_total_clusters + 2) continue;
         
         void *candidate_data = get_cluster_data(g_hdr, candidate);
         if (!candidate_data) continue;
