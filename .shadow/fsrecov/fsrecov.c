@@ -24,7 +24,6 @@ void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num);
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void carve_bmps(struct fat32hdr *hdr);
 void extract_bmp(void *cluster_data, uint32_t cluster_num);
-uint32_t get_next_cluster(uint32_t cluster);
 int is_bmp_extension(const char *filename);
 
 int main(int argc, char *argv[]) {
@@ -158,31 +157,10 @@ void calculate_sha1(const void *data, size_t len, char *sha1_str) {
     unlink(temp_filename);
 }
 
-uint32_t get_next_cluster(uint32_t cluster) {
-    if (cluster < 2 || cluster >= g_total_clusters + 2) {
-        return 0x0FFFFFFF; // End of chain
-    }
-    
-    uint32_t fat_entry = g_fat_table[cluster] & 0x0FFFFFFF;
-    
-    // Check for end of chain markers
-    if (fat_entry >= 0x0FFFFFF8) {
-        return 0x0FFFFFFF; // End of chain
-    }
-    
-    // Check for bad cluster
-    if (fat_entry == 0x0FFFFFF7) {
-        return 0x0FFFFFFF; // Bad cluster, treat as end
-    }
-    
-    return fat_entry;
-}
 
-// Extract long filename from a single LFN entry
 void extract_single_lfn(uint8_t *lfn_data, char *partial_name) {
     int char_count = 0;
     
-    // Extract Unicode characters and convert to ASCII (simplified)
     // Characters are stored at offsets 1-10, 14-25, 28-31
     for (int i = 1; i <= 10; i += 2) {
         if (lfn_data[i] != 0 && lfn_data[i] != 0xFF && char_count < 255) {
@@ -262,7 +240,6 @@ void extract_bmp(void *cluster_data, uint32_t cluster_num) {
                         bytes_read += bytes_to_copy;
                             
                         current_cluster++;
-                        if (current_cluster == 0x0FFFFFFF) break; // End of chain
                     }
                         
                     if (bytes_read >= file_size && bytes_read >= 14 && 
