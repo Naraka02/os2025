@@ -192,18 +192,10 @@ void get_long_filename(struct fat32dent *entries, int entry_index, char *long_na
         
         lfn_index--;
     }
-    
-    // Reverse the collected name and copy to output
-    if (total_chars > 0) {
-        for (int i = 0; i < total_chars; i++) {
-            long_name[i] = temp_name[total_chars - 1 - i];
-        }
-        long_name[total_chars] = '\0';
-    }
+
 }
 
 int is_bmp_file(const char *filename) {
-    printf("Checking if %s is a BMP file\n", filename);
     size_t len = strlen(filename);
     if (len < 4) return 0;
     
