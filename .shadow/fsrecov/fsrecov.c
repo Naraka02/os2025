@@ -253,6 +253,8 @@ void extract_bmp(uint32_t cluster_num) {
                     }
                     
                     lfn_start--;
+                } else {
+                    break;
                 }
             }
             
