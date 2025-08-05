@@ -296,7 +296,7 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
         printf("%s  %s\n", sha1_str, filename);
         fflush(stdout);
         
-        /*
+        
         // Create output directory
         mkdir("recovered_bmps", 0755);
         
@@ -313,7 +313,7 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
         } else {
             printf("Failed to write recovered file: %s\n", output_path);
         }
-        */
+        
     }
     
     free(file_data);
