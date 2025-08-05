@@ -202,76 +202,9 @@ void extract_bmp(uint32_t cluster_num) {
         struct fat32dent *entry = &entries[i];
         uint8_t *entry_data = (uint8_t *)entry;
         
-        if (entry->DIR_Name[0] == 0x00) break;
-        
-        if ((entry->DIR_Attr & 0x0F) == 0x0F) {
-            uint8_t is_last = (entry_data[0] & 0x40) ? 1 : 0;
-            
-            char partial_name[256];
-            extract_single_lfn(entry_data, partial_name);
-            
-            if (is_last) {
-                strcpy(filename, partial_name);
-            } else {
-                char temp[256];
-                strcpy(temp, partial_name);
-                strcat(temp, filename);
-                strcpy(filename, temp);
-            }
-        } 
-        else if (entry->DIR_Name[0] != 0xE5 || entry->DIR_Name[0] == 0xE5) {      
-            uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
-            uint32_t file_size = entry->DIR_FileSize;
-
-            char short_name[13];
-            int j = 0;
-            for (int k = 0; k < 8 && entry->DIR_Name[k] != ' '; k++) {
-                short_name[j++] = tolower(entry->DIR_Name[k]);
-            }
-            if (entry->DIR_Name[8] != ' ') {
-                short_name[j++] = '.';
-                for (int k = 8; k < 11 && entry->DIR_Name[k] != ' '; k++) {
-                    short_name[j++] = tolower(entry->DIR_Name[k]);
-                }
-            }
-            short_name[j] = '\0';
-
-            const char *display_name = (strlen(filename) > 0) ? filename : short_name;
-
-            if (is_bmp_extension(display_name) || is_bmp_extension(short_name)) {
-                if (start_cluster >= 2 && file_size > 0) {
-                    uint8_t *file_data = malloc(file_size);
-                    if (file_data) {
-                        uint32_t bytes_read = 0;
-                        uint32_t current_cluster = start_cluster;
-
-                        while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
-                            void *cluster_data = get_cluster_data(g_hdr, current_cluster);
-                            if (!cluster_data) break;
-                            
-                            uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
-                                                    g_cluster_size : (file_size - bytes_read);
-                            
-                            memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
-                            bytes_read += bytes_to_copy;
-                            current_cluster++;
-                        }
-
-                        if (bytes_read >= file_size && bytes_read >= 14 && 
-                            file_data[0] == 'B' && file_data[1] == 'M') {
-                            char sha1_str[41];
-                            calculate_sha1(file_data, bytes_read, sha1_str);
-                            printf("%s  %s\n", sha1_str, display_name);
-                            fflush(stdout);
-                        }
-                        
-                        free(file_data);
-                    }
-                }
-            }
-
-            filename[0] = '\0';
-        }
+        // print deubg information of entry
+        printf("Entry %d: Name: %.11s, Attr: 0x%02x, Size: %u\n",
+               i, entry->DIR_Name, entry->DIR_Attr, entry->DIR_FileSize);
     }
 }
 
