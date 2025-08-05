@@ -223,6 +223,7 @@ void extract_bmp(uint32_t cluster_num) {
                     
                     char partial_name[256];
                     extract_single_lfn(lfn_data, partial_name);
+                    printf("LFN part: %s\n", partial_name);
                     
                     if (strlen(long_filename) == 0) {
                         strcpy(long_filename, partial_name);
