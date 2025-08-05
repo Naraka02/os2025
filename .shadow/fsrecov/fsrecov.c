@@ -244,7 +244,7 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
         
         // Generate output file path
         char output_path[512];
-        snprintf(output_path, sizeof(output_path), "recovered_bmps/%s_%s.bmp", 
+        snprintf(output_path, sizeof(output_path), "recovered_bmps/%s_%s", 
                 sha1_str, filename);
         
         // Write the recovered BMP file
