@@ -208,37 +208,36 @@ void extract_bmp(uint32_t cluster_num) {
         uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
         uint32_t file_size = entry->DIR_FileSize;
         
-        // Collect LFN entries backwards
-        char filename[256] = "";
+        // Collect LFN entry backwards
+        char long_filename[256] = "";
         int lfn_start = i - 1;
         
-        char lfn_fragments[20][14]; // Max 20 LFN entries, 13 chars each + null terminator
-        int fragment_count = 0;
-        
-        while (lfn_start >= 0 && fragment_count < 20) {
+        while (lfn_start >= 0) {
             struct fat32dent *lfn_entry = &entries[lfn_start];
             
             // Stop if not LFN entry
             if ((lfn_entry->DIR_Attr & 0x0F) != 0x0F) break;
             
             uint8_t *lfn_data = (uint8_t *)lfn_entry;
-            uint8_t sequence = lfn_data[0] & 0x1F;
             uint8_t is_last = (lfn_data[0] & 0x40) ? 1 : 0;
             
-            extract_single_lfn(lfn_data, lfn_fragments[fragment_count]);
-            fragment_count++;
+            char partial_name[256];
+            extract_single_lfn(lfn_data, partial_name);
+            
+            if (strlen(long_filename) == 0) {
+                strcpy(long_filename, partial_name);
+            } else {
+                char temp[256];
+                strcpy(temp, long_filename);
+                strcat(temp, partial_name);
+                strcpy(long_filename, temp);
+            }
             
             if (is_last) break;
             lfn_start--;
         }
         
-        for (int j = fragment_count - 1; j >= 0; j--) {
-            printf("%s %s\n", filename, lfn_fragments[j]);
-            strcat(filename, lfn_fragments[j]);
-        }
-        
-        // Check if it's a BMP file (both extension and content)
-        if (!is_bmp_extension(filename)) continue;
+        if (!is_bmp_extension(long_filename)) continue;
         if (start_cluster < 2 || file_size == 0) continue;
         
         uint8_t *file_data = malloc(file_size);
@@ -247,7 +246,6 @@ void extract_bmp(uint32_t cluster_num) {
         uint32_t bytes_read = 0;
         uint32_t current_cluster = start_cluster;
         
-        // Read file data cluster by cluster
         while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
             void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
             if (!cluster_data_file) break;
@@ -260,16 +258,11 @@ void extract_bmp(uint32_t cluster_num) {
             current_cluster++;
         }
         
-        // Validate BMP file signature and basic header
-        if (bytes_read >= 14 && file_data[0] == 'B' && file_data[1] == 'M') {
-            // Additional BMP validation - check if file size in header matches
-            uint32_t bmp_file_size = *(uint32_t*)(file_data + 2);
-            if (bmp_file_size == file_size || (bmp_file_size > 0 && bmp_file_size <= file_size + g_cluster_size)) {
-                char sha1_str[41];
-                calculate_sha1(file_data, bytes_read, sha1_str);
-                printf("%s  %s\n", sha1_str, filename);
-                fflush(stdout);
-            }
+        if (file_data[0] == 'B' && file_data[1] == 'M') {
+            char sha1_str[41];
+            calculate_sha1(file_data, bytes_read, sha1_str);
+            printf("%s  %s\n", sha1_str, long_filename);
+            fflush(stdout);
         }
         
         free(file_data);
