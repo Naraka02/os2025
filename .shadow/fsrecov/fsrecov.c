@@ -283,12 +283,6 @@ void carve_bmps(struct fat32hdr *hdr) {
                 break;
             }
             
-            // Also check deleted entries
-            if (entry->DIR_Name[0] == 0xE5 && 
-                (entry->DIR_Attr & (ATTR_DIRECTORY | ATTR_ARCHIVE))) {
-                has_directory_entries = 1;
-                break;
-            }
         }
         
         if (has_directory_entries) {
