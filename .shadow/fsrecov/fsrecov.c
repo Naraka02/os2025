@@ -196,15 +196,109 @@ void extract_bmp(uint32_t cluster_num) {
     if (!cluster_data) return;
 
     struct fat32dent *entries = (struct fat32dent *)cluster_data;
-    char filename[256] = "";
     
+    // 遍历cluster中的所有directory entries
     for (uint32_t i = 0; i < g_entries_per_cluster; i++) {
         struct fat32dent *entry = &entries[i];
-        uint8_t *entry_data = (uint8_t *)entry;
         
-        // print deubg information of entry
-        printf("Entry %d: Name: %.11s, Attr: 0x%02x, Size: %u\n",
-               i, entry->DIR_Name, entry->DIR_Attr, entry->DIR_FileSize);
+        // 跳过空entries
+        if (entry->DIR_Name[0] == 0x00) break;
+        
+        // 先找标准entry（非LFN）
+        if ((entry->DIR_Attr & 0x0F) != 0x0F) {
+            uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
+            uint32_t file_size = entry->DIR_FileSize;
+            
+            // 创建短文件名
+            char short_name[13];
+            int j = 0;
+            for (int k = 0; k < 8 && entry->DIR_Name[k] != ' '; k++) {
+                short_name[j++] = tolower(entry->DIR_Name[k]);
+            }
+            if (entry->DIR_Name[8] != ' ') {
+                short_name[j++] = '.';
+                for (int k = 8; k < 11 && entry->DIR_Name[k] != ' '; k++) {
+                    short_name[j++] = tolower(entry->DIR_Name[k]);
+                }
+            }
+            short_name[j] = '\0';
+            
+            // 以此标准entry为中心，向前查找LFN entries
+            char long_filename[256] = "";
+            int lfn_start = i - 1;
+            
+            // 向前扫描，收集LFN entries
+            while (lfn_start >= 0) {
+                struct fat32dent *lfn_entry = &entries[lfn_start];
+                
+                // 检查是否为LFN entry
+                if ((lfn_entry->DIR_Attr & 0x0F) == 0x0F) {
+                    uint8_t *lfn_data = (uint8_t *)lfn_entry;
+                    uint8_t sequence = lfn_data[0] & 0x1F;
+                    uint8_t is_last = (lfn_data[0] & 0x40) ? 1 : 0;
+                    
+                    char partial_name[256];
+                    extract_single_lfn(lfn_data, partial_name);
+                    
+                    // 将此片段添加到长文件名前面
+                    if (strlen(long_filename) == 0) {
+                        strcpy(long_filename, partial_name);
+                    } else {
+                        char temp[256];
+                        strcpy(temp, partial_name);
+                        strcat(temp, long_filename);
+                        strcpy(long_filename, temp);
+                    }
+                    
+                    // 如果是最后一个LFN entry（序号最高），停止搜索
+                    if (is_last) {
+                        break;
+                    }
+                    
+                    lfn_start--;
+                } else {
+                    // 遇到非LFN entry，停止搜索
+                    break;
+                }
+            }
+            
+            // 选择使用的文件名（长文件名优先）
+            const char *display_name = (strlen(long_filename) > 0) ? long_filename : short_name;
+            
+            // 只处理BMP文件
+            if (is_bmp_extension(display_name) || is_bmp_extension(short_name)) {
+                if (start_cluster >= 2 && file_size > 0) {
+                    uint8_t *file_data = malloc(file_size);
+                    if (file_data) {
+                        uint32_t bytes_read = 0;
+                        uint32_t current_cluster = start_cluster;
+                        
+                        // 按顺序读取clusters（因为FAT表被清除）
+                        while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
+                            void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
+                            if (!cluster_data_file) break;
+                            
+                            uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
+                                                    g_cluster_size : (file_size - bytes_read);
+                            
+                            memcpy(file_data + bytes_read, cluster_data_file, bytes_to_copy);
+                            bytes_read += bytes_to_copy;
+                            current_cluster++;
+                        }
+                        
+                        // 验证BMP文件并计算hash
+                        if (bytes_read >= file_size && bytes_read >= 14 && 
+                            file_data[0] == 'B' && file_data[1] == 'M') {
+                            char sha1_str[41];
+                            calculate_sha1(file_data, bytes_read, sha1_str);
+                            printf("%s  %s\n", sha1_str, display_name);
+                        }
+                        
+                        free(file_data);
+                    }
+                }
+            }
+        }
     }
 }
 
