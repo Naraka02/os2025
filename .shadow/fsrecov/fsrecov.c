@@ -230,8 +230,8 @@ void extract_bmp(uint32_t cluster_num) {
                         strcpy(long_filename, partial_name);
                     } else {
                         char temp[256];
-                        strcpy(temp, partial_name);
-                        strcat(temp, long_filename);
+                        strcpy(temp, long_filename);
+                        strcat(temp, partial_name);
                         strcpy(long_filename, temp);
                     }
                     
