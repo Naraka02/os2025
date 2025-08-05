@@ -246,7 +246,7 @@ void extract_bmp(uint32_t cluster_num) {
         uint32_t bytes_read = 0;
         uint32_t current_cluster = start_cluster;
         void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
-        printf("%c\n", (char)cluster_data_file);
+        printf("%c\n", (char *)cluster_data_file[0]);
         
         while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
             cluster_data_file = get_cluster_data(g_hdr, current_cluster);
