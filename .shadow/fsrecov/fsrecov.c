@@ -382,7 +382,7 @@ void extract_lfn_from_cluster(void *cluster_data, uint32_t cluster_num) {
                         
                         // Read clusters sequentially 
                         while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
-                            void *cluster_data = get_cluster_data(hdr, current_cluster);
+                            void *cluster_data = get_cluster_data(g_hdr, current_cluster);
                             if (!cluster_data) break;
                             
                             uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
