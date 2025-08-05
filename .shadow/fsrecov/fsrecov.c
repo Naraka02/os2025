@@ -202,20 +202,20 @@ void extract_bmp(uint32_t cluster_num) {
         
         if (entry->DIR_Name[0] == 0x00) break;
         
-        // 只处理标准entry（非LFN）
+        // Check for standard entry
         if ((entry->DIR_Attr & 0x0F) == 0x0F) continue;
         
         uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
         uint32_t file_size = entry->DIR_FileSize;
         
-        // 向前收集LFN entries
+        // Collect LFN entry backwards
         char long_filename[256] = "";
         int lfn_start = i - 1;
         
         while (lfn_start >= 0) {
             struct fat32dent *lfn_entry = &entries[lfn_start];
             
-            // 如果不是LFN entry，停止搜索
+            // Stop if not LFN entry
             if ((lfn_entry->DIR_Attr & 0x0F) != 0x0F) break;
             
             uint8_t *lfn_data = (uint8_t *)lfn_entry;
@@ -237,20 +237,19 @@ void extract_bmp(uint32_t cluster_num) {
             lfn_start--;
         }
         
-        // 检查是否为BMP文件
         if (!is_bmp_extension(long_filename)) continue;
         if (start_cluster < 2 || file_size == 0) continue;
         
-        // 分配内存读取文件
         uint8_t *file_data = malloc(file_size);
         if (!file_data) continue;
         
         uint32_t bytes_read = 0;
         uint32_t current_cluster = start_cluster;
+        void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
+        printf("%c\n", (char *)cluster_data_file);
         
-        // 读取文件数据
         while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
-            void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
+            cluster_data_file = get_cluster_data(g_hdr, current_cluster);
             if (!cluster_data_file) break;
             
             uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
