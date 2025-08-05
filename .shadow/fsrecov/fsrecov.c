@@ -243,31 +243,14 @@ void extract_bmp(void *cluster_data, uint32_t cluster_num) {
             uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
             uint32_t file_size = entry->DIR_FileSize;
 
-            // Also create short name for fallback
-            char short_name[13];
-            int j = 0;
-            for (int k = 0; k < 8 && entry->DIR_Name[k] != ' '; k++) {
-                short_name[j++] = tolower(entry->DIR_Name[k]);
-            }
-            if (entry->DIR_Name[8] != ' ') {
-                short_name[j++] = '.';
-                for (int k = 8; k < 11 && entry->DIR_Name[k] != ' '; k++) {
-                    short_name[j++] = tolower(entry->DIR_Name[k]);
-                }
-            }
-            short_name[j] = '\0';
-
-            // Use long filename if available, otherwise use short name
-            const char *display_name = (strlen(filename) > 0) ? filename : short_name;
-
-            if (is_bmp_extension(display_name) || is_bmp_extension(short_name)) {
+            if (is_bmp_extension(filename)) {
                 if (start_cluster >= 2 && file_size > 0) {
                     uint8_t *file_data = malloc(file_size);
                     if (file_data) {
                         uint32_t bytes_read = 0;
                         uint32_t current_cluster = start_cluster;
                         
-                        // Follow the FAT chain instead of reading sequentially
+                        // Read clusters sequentially 
                         while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
                             void *cluster_data = get_cluster_data(g_hdr, current_cluster);
                             if (!cluster_data) break;
@@ -287,14 +270,11 @@ void extract_bmp(void *cluster_data, uint32_t cluster_num) {
                             file_data[0] == 'B' && file_data[1] == 'M') {
                             char sha1_str[41];
                             calculate_sha1(file_data, bytes_read, sha1_str);
-                            printf("%s  %s\n", sha1_str, display_name);
+                            printf("%s  %s\n", sha1_str, filename);
                         }
                         
                         free(file_data);
                     }
-                } else if (strlen(display_name) > 0) {
-                    // For files without valid cluster info (deleted files), still show the filename
-                    printf("(no_hash)  %s\n", display_name);
                 }
             }
             
