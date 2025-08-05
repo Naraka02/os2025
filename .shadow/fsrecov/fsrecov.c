@@ -245,6 +245,7 @@ void extract_bmp(uint32_t cluster_num) {
                     break;
                 }
             }
+            printf("Final long filename: %s\n", long_filename);
             
             if (is_bmp_extension(long_filename)) {
                 if (start_cluster >= 2 && file_size > 0) {
