@@ -148,11 +148,8 @@ void fat32_name_to_string(const uint8_t *fat_name, char *output) {
 
 // Extract long filename from LFN entries
 void get_long_filename(struct fat32dent *entries, int entry_index, char *long_name) {
-    long_name[0] = '\0';
-    
     // Look backwards for LFN entries
     int lfn_index = entry_index - 1;
-    char temp_name[256] = {0};
     int total_chars = 0;
     
     // Collect LFN entries in reverse order
@@ -171,17 +168,17 @@ void get_long_filename(struct fat32dent *entries, int entry_index, char *long_na
         // Characters are stored at offsets 1-10, 14-25, 28-31
         for (int i = 1; i <= 10; i += 2) {
             if (lfn_data[i] != 0 && lfn_data[i] != 0xFF) {
-                temp_name[total_chars++] = lfn_data[i];
+                long_name[total_chars++] = lfn_data[i];
             }
         }
         for (int i = 14; i <= 25; i += 2) {
             if (lfn_data[i] != 0 && lfn_data[i] != 0xFF) {
-                temp_name[total_chars++] = lfn_data[i];
+                long_name[total_chars++] = lfn_data[i];
             }
         }
         for (int i = 28; i <= 31; i += 2) {
             if (lfn_data[i] != 0 && lfn_data[i] != 0xFF) {
-                temp_name[total_chars++] = lfn_data[i];
+                long_name[total_chars++] = lfn_data[i];
             }
         }
         
@@ -192,7 +189,6 @@ void get_long_filename(struct fat32dent *entries, int entry_index, char *long_na
         
         lfn_index--;
     }
-
 }
 
 int is_bmp_file(const char *filename) {
