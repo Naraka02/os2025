@@ -198,7 +198,92 @@ void extract_bmp(uint32_t cluster_num) {
     struct fat32dent *entries = (struct fat32dent *)cluster_data;
     char filename[256] = "";
     
-    printf("entry %s\n", entries->DIR_Name);
+    // 遍历cluster中的所有directory entries
+    for (uint32_t i = 0; i < g_entries_per_cluster; i++) {
+        struct fat32dent *entry = &entries[i];
+        uint8_t *entry_data = (uint8_t *)entry;
+        
+        // 跳过空entries
+        if (entry->DIR_Name[0] == 0x00) break;
+        
+        // 检查是否是LFN entry
+        if ((entry->DIR_Attr & 0x0F) == 0x0F) {
+            uint8_t is_last = (entry_data[0] & 0x40) ? 1 : 0;
+            
+            char partial_name[256];
+            extract_single_lfn(entry_data, partial_name);
+            
+            // 如果是最后一个LFN entry（最高序号），重新开始
+            if (is_last) {
+                strcpy(filename, partial_name);
+            } else {
+                // 将此片段添加到完整文件名前面
+                char temp[256];
+                strcpy(temp, partial_name);
+                strcat(temp, filename);
+                strcpy(filename, temp);
+            }
+        } 
+        // 处理标准directory entry
+        else if (entry->DIR_Name[0] != 0xE5 || entry->DIR_Name[0] == 0xE5) {      
+            uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
+            uint32_t file_size = entry->DIR_FileSize;
+
+            // 创建短文件名作为备选
+            char short_name[13];
+            int j = 0;
+            for (int k = 0; k < 8 && entry->DIR_Name[k] != ' '; k++) {
+                short_name[j++] = tolower(entry->DIR_Name[k]);
+            }
+            if (entry->DIR_Name[8] != ' ') {
+                short_name[j++] = '.';
+                for (int k = 8; k < 11 && entry->DIR_Name[k] != ' '; k++) {
+                    short_name[j++] = tolower(entry->DIR_Name[k]);
+                }
+            }
+            short_name[j] = '\0';
+
+            // 使用长文件名（如果有），否则使用短文件名
+            const char *display_name = (strlen(filename) > 0) ? filename : short_name;
+
+            // 只处理BMP文件
+            if (is_bmp_extension(display_name) || is_bmp_extension(short_name)) {
+                if (start_cluster >= 2 && file_size > 0) {
+                    uint8_t *file_data = malloc(file_size);
+                    if (file_data) {
+                        uint32_t bytes_read = 0;
+                        uint32_t current_cluster = start_cluster;
+                        
+                        // 按顺序读取clusters（因为FAT表被清除）
+                        while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
+                            void *cluster_data = get_cluster_data(g_hdr, current_cluster);
+                            if (!cluster_data) break;
+                            
+                            uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
+                                                    g_cluster_size : (file_size - bytes_read);
+                            
+                            memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
+                            bytes_read += bytes_to_copy;
+                            current_cluster++;
+                        }
+                        
+                        // 验证BMP文件并计算hash
+                        if (bytes_read >= file_size && bytes_read >= 14 && 
+                            file_data[0] == 'B' && file_data[1] == 'M') {
+                            char sha1_str[41];
+                            calculate_sha1(file_data, bytes_read, sha1_str);
+                            printf("%s  %s\n", sha1_str, display_name);
+                        }
+                        
+                        free(file_data);
+                    }
+                }
+            }
+            
+            // 重置文件名，准备处理下一个文件
+            filename[0] = '\0';
+        }
+    }
 }
 
 void carve_bmps(struct fat32hdr *hdr) {
