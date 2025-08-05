@@ -24,7 +24,6 @@ void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num);
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void carve_bmps(struct fat32hdr *hdr);
 void extract_bmp(uint32_t cluster_num);
-uint32_t get_next_cluster(uint32_t cluster);
 int is_bmp_extension(const char *filename);
 int is_directory_cluster(uint32_t cluster);
 
