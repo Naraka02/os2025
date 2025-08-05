@@ -236,7 +236,25 @@ void extract_bmp(uint32_t cluster_num) {
             lfn_start--;
         }
         
-        if (!is_bmp_extension(long_filename)) continue;
+        if (!is_bmp_extension(long_filename)) {
+            char short_name[13];
+            int j = 0;
+            for (int k = 0; k < 8 && entry->DIR_Name[k] != ' '; k++) {
+                short_name[j++] = tolower(entry->DIR_Name[k]);
+            }
+            if (entry->DIR_Name[8] != ' ') {
+                short_name[j++] = '.';
+                for (int k = 8; k < 11 && entry->DIR_Name[k] != ' '; k++) {
+                    short_name[j++] = tolower(entry->DIR_Name[k]);
+                }
+            }
+            short_name[j] = '\0';
+            
+            if (!is_bmp_extension(short_name)) continue;
+            
+            strcpy(long_filename, short_name);
+        }
+        
         if (start_cluster < 2 || file_size == 0) continue;
 
         void *first_cluster_data = get_cluster_data(g_hdr, start_cluster);
@@ -283,7 +301,8 @@ void extract_bmp(uint32_t cluster_num) {
             char sha1_str[41];
             calculate_sha1(file_data, bytes_read, sha1_str);
             
-            printf("%s  %s\n", sha1_str, long_filename);
+            printf("%s  %s (offset=%u, %dx%d, size=%u)\n", 
+                   sha1_str, long_filename, bitmap_offset, width, abs(height), actual_file_size);
             fflush(stdout);
         }
         
