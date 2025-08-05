@@ -6,6 +6,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <openssl/sha.h>
+#include <ctype.h>
 #include "fat32.h"
 
 void *map_disk(const char *fname);
@@ -14,6 +17,12 @@ uint32_t *get_fat_table(struct fat32hdr *hdr);
 void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num);
 uint32_t get_next_cluster(uint32_t *fat_table, uint32_t cluster_num);
 void scan_clusters(struct fat32hdr *hdr);
+void recover_bmp_files(struct fat32hdr *hdr);
+void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path);
+int is_bmp_file(const char *filename);
+void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char *path);
+void calculate_sha1(const void *data, size_t len, char *sha1_str);
+void fat32_name_to_string(const uint8_t *fat_name, char *output);
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -33,6 +42,9 @@ int main(int argc, char *argv[]) {
 
     // Scan clusters
     scan_clusters(hdr);
+
+    // Recover BMP files
+    recover_bmp_files(hdr);
 
     // file system traversal
     munmap(hdr, hdr->BPB_TotSec32 * hdr->BPB_BytsPerSec);
@@ -219,4 +231,180 @@ void scan_clusters(struct fat32hdr *hdr) {
     }
     
     printf("\n");
+}
+
+// 将FAT32文件名转换为普通字符串
+void fat32_name_to_string(const uint8_t *fat_name, char *output) {
+    int i, j = 0;
+    
+    // 复制文件名部分（前8个字符）
+    for (i = 0; i < 8 && fat_name[i] != ' '; i++) {
+        output[j++] = tolower(fat_name[i]);
+    }
+    
+    // 检查是否有扩展名
+    if (fat_name[8] != ' ') {
+        output[j++] = '.';
+        for (i = 8; i < 11 && fat_name[i] != ' '; i++) {
+            output[j++] = tolower(fat_name[i]);
+        }
+    }
+    
+    output[j] = '\0';
+}
+
+// 检查是否是BMP文件
+int is_bmp_file(const char *filename) {
+    size_t len = strlen(filename);
+    if (len < 4) return 0;
+    
+    const char *ext = filename + len - 4;
+    return (strcasecmp(ext, ".bmp") == 0);
+}
+
+// 计算SHA1哈希值
+void calculate_sha1(const void *data, size_t len, char *sha1_str) {
+    unsigned char hash[SHA_DIGEST_LENGTH];
+    SHA1(data, len, hash);
+    
+    for (int i = 0; i < SHA_DIGEST_LENGTH; i++) {
+        sprintf(sha1_str + i * 2, "%02x", hash[i]);
+    }
+    sha1_str[SHA_DIGEST_LENGTH * 2] = '\0';
+}
+
+// 提取BMP文件
+void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char *path) {
+    // 获取文件大小和起始cluster
+    uint32_t file_size = entry->DIR_FileSize;
+    uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
+    
+    if (file_size == 0 || start_cluster < 2) {
+        return;
+    }
+    
+    // 分配内存来存储文件内容
+    uint8_t *file_data = malloc(file_size);
+    if (!file_data) {
+        printf("Memory allocation failed for file extraction\n");
+        return;
+    }
+    
+    // 读取文件的所有cluster
+    uint32_t *fat_table = get_fat_table(hdr);
+    uint32_t current_cluster = start_cluster;
+    uint32_t bytes_read = 0;
+    uint32_t cluster_size = hdr->BPB_BytsPerSec * hdr->BPB_SecPerClus;
+    
+    while (current_cluster >= 2 && bytes_read < file_size) {
+        void *cluster_data = get_cluster_data(hdr, current_cluster);
+        if (!cluster_data) break;
+        
+        uint32_t bytes_to_copy = (file_size - bytes_read > cluster_size) ? 
+                                cluster_size : (file_size - bytes_read);
+        
+        memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
+        bytes_read += bytes_to_copy;
+        
+        current_cluster = get_next_cluster(fat_table, current_cluster);
+    }
+    
+    // 验证是否是有效的BMP文件（检查BMP文件头）
+    if (bytes_read >= 14 && file_data[0] == 'B' && file_data[1] == 'M') {
+        // 生成文件名
+        char filename[256];
+        fat32_name_to_string(entry->DIR_Name, filename);
+        
+        // 计算SHA1
+        char sha1_str[SHA_DIGEST_LENGTH * 2 + 1];
+        calculate_sha1(file_data, bytes_read, sha1_str);
+        
+        // 创建输出目录
+        mkdir("recovered_bmps", 0755);
+        
+        // 生成输出文件路径
+        char output_path[512];
+        snprintf(output_path, sizeof(output_path), "recovered_bmps/%s_%s.bmp", 
+                sha1_str, filename);
+        
+        // 写入文件
+        FILE *outfile = fopen(output_path, "wb");
+        if (outfile) {
+            fwrite(file_data, 1, bytes_read, outfile);
+            fclose(outfile);
+            
+            printf("Recovered BMP: %s\n", filename);
+            printf("  Path: %s%s\n", path, filename);
+            printf("  Size: %u bytes\n", bytes_read);
+            printf("  SHA1: %s\n", sha1_str);
+            printf("  Output: %s\n\n", output_path);
+        } else {
+            printf("Failed to write recovered file: %s\n", output_path);
+        }
+    }
+    
+    free(file_data);
+}
+
+// 扫描目录寻找BMP文件
+void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path) {
+    if (cluster_num < 2) return;
+    
+    uint32_t *fat_table = get_fat_table(hdr);
+    uint32_t current_cluster = cluster_num;
+    uint32_t cluster_size = hdr->BPB_BytsPerSec * hdr->BPB_SecPerClus;
+    uint32_t entries_per_cluster = cluster_size / sizeof(struct fat32dent);
+    
+    while (current_cluster >= 2) {
+        void *cluster_data = get_cluster_data(hdr, current_cluster);
+        if (!cluster_data) break;
+        
+        struct fat32dent *entries = (struct fat32dent *)cluster_data;
+        
+        for (uint32_t i = 0; i < entries_per_cluster; i++) {
+            struct fat32dent *entry = &entries[i];
+            
+            // 跳过空条目和删除的文件
+            if (entry->DIR_Name[0] == 0x00) break;
+            if (entry->DIR_Name[0] == 0xE5) continue;
+            
+            // 跳过长文件名条目
+            if ((entry->DIR_Attr & 0x0F) == 0x0F) continue;
+            
+            // 跳过"."和".."条目
+            if (entry->DIR_Name[0] == '.') continue;
+            
+            char filename[256];
+            fat32_name_to_string(entry->DIR_Name, filename);
+            
+            if (entry->DIR_Attr & ATTR_DIRECTORY) {
+                // 递归扫描子目录
+                if (strcmp(filename, ".") != 0 && strcmp(filename, "..") != 0) {
+                    uint32_t subdir_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
+                    char new_path[512];
+                    snprintf(new_path, sizeof(new_path), "%s%s/", path, filename);
+                    scan_directory(hdr, subdir_cluster, new_path);
+                }
+            } else {
+                // 检查是否是BMP文件
+                if (is_bmp_file(filename)) {
+                    extract_bmp_file(hdr, entry, path);
+                }
+            }
+        }
+        
+        current_cluster = get_next_cluster(fat_table, current_cluster);
+    }
+}
+
+// 恢复BMP文件的主函数
+void recover_bmp_files(struct fat32hdr *hdr) {
+    printf("=== BMP File Recovery ===\n");
+    printf("Scanning filesystem for BMP files...\n\n");
+    
+    // 从根目录开始扫描
+    scan_directory(hdr, hdr->BPB_RootClus, "/");
+    
+    printf("BMP file recovery completed.\n");
+    printf("All recovered files are saved in the 'recovered_bmps' directory.\n\n");
 }
