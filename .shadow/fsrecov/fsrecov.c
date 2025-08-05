@@ -248,7 +248,7 @@ void extract_bmp(void *cluster_data, uint32_t cluster_num) {
                             file_data[0] == 'B' && file_data[1] == 'M') {
                             char sha1_str[41];
                             calculate_sha1(file_data, bytes_read, sha1_str);
-                            printf("%s  %s\n", sha1_str, display_name);
+                            printf("%s  %s\n", sha1_str, filename);
                         }
                         
                         free(file_data);
