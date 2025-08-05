@@ -217,7 +217,7 @@ void extract_bmp(void *cluster_data, uint32_t cluster_num) {
                 strcat(temp, filename);
                 strcpy(filename, temp);
             }
-        } else if (entry->DIR_Name[0] != 0xE5 || entry->DIR_Name[0] == 0xE5) {      
+        } else  {      
             uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
             uint32_t file_size = entry->DIR_FileSize;
 
