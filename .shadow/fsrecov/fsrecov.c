@@ -22,10 +22,7 @@ void init_globals(struct fat32hdr *hdr);
 uint32_t *get_fat_table(struct fat32hdr *hdr);
 void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num);
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
-void carve_bmp_files(struct fat32hdr *hdr);
-int is_valid_bmp_header(const uint8_t *data, uint32_t cluster_size);
-void extract_carved_bmp(struct fat32hdr *hdr, uint32_t start_cluster, uint32_t file_size);
-void carve_directory_info(struct fat32hdr *hdr);
+void carve_bmps(struct fat32hdr *hdr);
 void extract_lfn_from_cluster(void *cluster_data, uint32_t cluster_num);
 int is_bmp_extension(const char *filename);
 
@@ -45,10 +42,7 @@ int main(int argc, char *argv[]) {
     init_globals(hdr);
     
     // Carve directory information first (recover filenames)
-    printf("=== Directory Information Recovery ===\n");
-    carve_directory_info(hdr);
-    
-
+    carve_bmps(hdr);
 
     // file system traversal
     munmap(hdr, hdr->BPB_TotSec32 * hdr->BPB_BytsPerSec);
@@ -163,121 +157,6 @@ void calculate_sha1(const void *data, size_t len, char *sha1_str) {
     unlink(temp_filename);
 }
 
-int is_valid_bmp_header(const uint8_t *data, uint32_t cluster_size) {
-    // Check BMP signature
-    if (data[0] != 'B' || data[1] != 'M') {
-        return 0;
-    }
-    
-    if (cluster_size < 54) {  // Minimum BMP header size
-        return 0;
-    }
-    
-    // Extract file size from BMP header (bytes 2-5)
-    uint32_t file_size = *(uint32_t*)(data + 2);
-    
-    if (file_size < 54 || file_size > 100 * 1024 * 1024) {  // Between 54 bytes and 100MB
-        return 0;
-    }
-    
-    // Extract data offset (bytes 10-13)
-    uint32_t data_offset = *(uint32_t*)(data + 10);
-    if (data_offset < 54 || data_offset > file_size) {
-        return 0;
-    }
-    
-    // Extract header size (bytes 14-17)
-    uint32_t header_size = *(uint32_t*)(data + 14);
-    if (header_size < 40) {  // Minimum DIB header size
-        return 0;
-    }
-    
-    // Extract width and height (bytes 18-21 and 22-25)
-    int32_t width = *(int32_t*)(data + 18);
-    int32_t height = *(int32_t*)(data + 22);
-    
-    if (width <= 0 || height == 0 || width > 10000 || abs(height) > 10000) {
-        return 0;
-    }
-    
-    return 1;
-}
-
-// Extract a carved BMP file
-void extract_carved_bmp(struct fat32hdr *hdr, uint32_t start_cluster, uint32_t file_size) {
-    static int carved_file_counter = 0;
-    
-    // Store file in memory
-    uint8_t *file_data = malloc(file_size);
-    if (!file_data) {
-        printf("Memory allocation failed for carved file\n");
-        return;
-    }
-    
-    // Read clusters sequentially
-    uint32_t bytes_read = 0;
-    uint32_t current_cluster = start_cluster;
-    
-    while (bytes_read < file_size && current_cluster < g_total_clusters + 2) {
-        void *cluster_data = get_cluster_data(hdr, current_cluster);
-        if (!cluster_data) break;
-        
-        uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
-                                g_cluster_size : (file_size - bytes_read);
-        
-        memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
-        bytes_read += bytes_to_copy;
-        current_cluster++;
-    }
-    
-    // Verify we got the complete file
-    if (bytes_read >= file_size && file_data[0] == 'B' && file_data[1] == 'M') {
-        // Calculate SHA1 hash
-        char sha1_str[41];
-        calculate_sha1(file_data, file_size, sha1_str);
-        
-        // Generate filename based on cluster and counter
-        char filename[256];
-        snprintf(filename, sizeof(filename), "carved_cluster_%u_file_%d.bmp", 
-                start_cluster, ++carved_file_counter);
-        
-        printf("%s  %s\n", sha1_str, filename);
-        fflush(stdout);
-        
-        // Optionally save the file (uncomment if needed)
-        /*
-        mkdir("recovered_bmps", 0755);
-        char output_path[512];
-        snprintf(output_path, sizeof(output_path), "recovered_bmps/%s", filename);
-        
-        FILE *outfile = fopen(output_path, "wb");
-        if (outfile) {
-            fwrite(file_data, 1, file_size, outfile);
-            fclose(outfile);
-        }
-        */
-    }
-    
-    free(file_data);
-}
-
-void carve_bmp_files(struct fat32hdr *hdr) {
-    // Scan all data clusters
-    for (uint32_t cluster = 2; cluster < g_total_clusters + 2; cluster++) {
-        void *cluster_data = get_cluster_data(hdr, cluster);
-        if (!cluster_data) continue;
-        
-        uint8_t *data = (uint8_t *)cluster_data;
-        
-        // Check if this cluster starts with a BMP signature
-        if (is_valid_bmp_header(data, g_cluster_size)) {
-            uint32_t file_size = *(uint32_t*)(data + 2);
-            extract_carved_bmp(hdr, cluster, file_size);
-        }
-    }
-
-}
-
 // Extract long filename from a single LFN entry
 void extract_single_lfn(uint8_t *lfn_data, char *partial_name) {
     int char_count = 0;
@@ -312,10 +191,9 @@ int is_bmp_extension(const char *filename) {
     return (strcasecmp(ext, ".bmp") == 0);
 }
 
-// Extract LFN entries from a directory cluster
 void extract_lfn_from_cluster(void *cluster_data, uint32_t cluster_num) {
     struct fat32dent *entries = (struct fat32dent *)cluster_data;
-    char current_long_filename[256] = "";
+    char filename[256] = "";
     
     for (uint32_t i = 0; i < g_entries_per_cluster; i++) {
         struct fat32dent *entry = &entries[i];
@@ -334,13 +212,13 @@ void extract_lfn_from_cluster(void *cluster_data, uint32_t cluster_num) {
             
             // If this is the first LFN entry (highest sequence number), start fresh
             if (is_last) {
-                strcpy(current_long_filename, partial_name);
+                strcpy(filename, partial_name);
             } else {
                 // Prepend this fragment to build the complete name
                 char temp[256];
                 strcpy(temp, partial_name);
-                strcat(temp, current_long_filename);
-                strcpy(current_long_filename, temp);
+                strcat(temp, filename);
+                strcpy(filename, temp);
             }
         }
         // Check for regular directory entries (including deleted ones)
@@ -365,8 +243,8 @@ void extract_lfn_from_cluster(void *cluster_data, uint32_t cluster_num) {
             
             // Determine which filename to use (long or short)
             const char *display_name = short_name;
-            if (strlen(current_long_filename) > 0) {
-                display_name = current_long_filename;
+            if (strlen(filename) > 0) {
+                display_name = filename;
             }
             
             // Only show BMP files
@@ -402,22 +280,17 @@ void extract_lfn_from_cluster(void *cluster_data, uint32_t cluster_num) {
                         
                         free(file_data);
                     }
-                } else {
-                    // For deleted files or files without valid cluster info, just show filename
-                    printf("(no_hash)  %s\n", display_name);
                 }
             }
             
             // Reset long filename after processing the directory entry
-            current_long_filename[0] = '\0';
+            filename[0] = '\0';
         }
     }
 }
 
 // Carve directory information from all clusters
-void carve_directory_info(struct fat32hdr *hdr) {
-    printf("Scanning all clusters for BMP filenames...\n");
-    
+void carve_bmps(struct fat32hdr *hdr) {
     for (uint32_t cluster = 2; cluster < g_total_clusters + 2; cluster++) {
         void *cluster_data = get_cluster_data(hdr, cluster);
         if (!cluster_data) continue;
@@ -454,6 +327,4 @@ void carve_directory_info(struct fat32hdr *hdr) {
             extract_lfn_from_cluster(cluster_data, cluster);
         }
     }
-    
-    printf("BMP filename recovery completed.\n");
 }
