@@ -207,20 +207,6 @@ void extract_bmp(uint32_t cluster_num) {
             uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
             uint32_t file_size = entry->DIR_FileSize;
             
-            // Create short file name
-            char short_name[13];
-            int j = 0;
-            for (int k = 0; k < 8 && entry->DIR_Name[k] != ' '; k++) {
-                short_name[j++] = tolower(entry->DIR_Name[k]);
-            }
-            if (entry->DIR_Name[8] != ' ') {
-                short_name[j++] = '.';
-                for (int k = 8; k < 11 && entry->DIR_Name[k] != ' '; k++) {
-                    short_name[j++] = tolower(entry->DIR_Name[k]);
-                }
-            }
-            short_name[j] = '\0';
-            
             // Collect long file name (LFN) entries
             char long_filename[256] = "";
             int lfn_start = i - 1;
@@ -258,9 +244,7 @@ void extract_bmp(uint32_t cluster_num) {
                 }
             }
             
-            const char *display_name =  short_name;
-            
-            if (is_bmp_extension(display_name) || is_bmp_extension(short_name)) {
+            if (is_bmp_extension(long_filename)) {
                 if (start_cluster >= 2 && file_size > 0) {
                     uint8_t *file_data = malloc(file_size);
                     if (file_data) {
@@ -283,7 +267,7 @@ void extract_bmp(uint32_t cluster_num) {
                             file_data[0] == 'B' && file_data[1] == 'M') {
                             char sha1_str[41];
                             calculate_sha1(file_data, bytes_read, sha1_str);
-                            printf("%s  %s\n", sha1_str, display_name);
+                            printf("%s  %s\n", sha1_str, long_filename);
                             fflush(stdout);
                         }
                         
