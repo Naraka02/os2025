@@ -24,6 +24,7 @@ void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num);
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void carve_bmps(struct fat32hdr *hdr);
 void extract_bmp(uint32_t cluster_num);
+uint32_t find_next_cluster(uint32_t current_cluster, uint32_t remaining_bytes);
 uint32_t get_next_cluster(uint32_t cluster);
 int is_bmp_extension(const char *filename);
 int is_directory_cluster(uint32_t cluster);
@@ -159,6 +160,59 @@ void calculate_sha1(const void *data, size_t len, char *sha1_str) {
     unlink(temp_filename);
 }
 
+uint32_t find_next_cluster(uint32_t current_cluster, uint32_t remaining_bytes) {
+    uint32_t next_cluster = current_cluster + 1;
+    
+    if (next_cluster < g_total_clusters + 2) {
+        void *cluster_data = get_cluster_data(g_hdr, next_cluster);
+        if (cluster_data) {
+            uint8_t *data = (uint8_t *)cluster_data;
+            int non_zero_count = 0;
+            for (uint32_t i = 0; i < g_cluster_size && i < 64; i++) {
+                if (data[i] != 0) non_zero_count++;
+            }
+            if (non_zero_count > 8) {
+                return next_cluster;
+            }
+        }
+    }
+    
+    for (int offset = 2; offset <= 10; offset++) {
+        uint32_t candidate = current_cluster + offset;
+        if (candidate < g_total_clusters + 2) {
+            void *cluster_data = get_cluster_data(g_hdr, candidate);
+            if (cluster_data) {
+                uint8_t *data = (uint8_t *)cluster_data;
+                int non_zero_count = 0;
+                for (uint32_t i = 0; i < g_cluster_size && i < 64; i++) {
+                    if (data[i] != 0) non_zero_count++;
+                }
+                if (non_zero_count > 16) {
+                    return candidate;
+                }
+            }
+        }
+        
+        if (current_cluster >= offset) {
+            candidate = current_cluster - offset;
+            if (candidate >= 2) {
+                void *cluster_data = get_cluster_data(g_hdr, candidate);
+                if (cluster_data) {
+                    uint8_t *data = (uint8_t *)cluster_data;
+                    int non_zero_count = 0;
+                    for (uint32_t i = 0; i < g_cluster_size && i < 64; i++) {
+                        if (data[i] != 0) non_zero_count++;
+                    }
+                    if (non_zero_count > 16) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+    }
+    
+    return current_cluster + 1;
+}
 
 void extract_single_lfn(uint8_t *lfn_data, char *partial_name) {
     int char_count = 0;
@@ -255,7 +309,10 @@ void extract_bmp(uint32_t cluster_num) {
             
             memcpy(file_data + bytes_read, cluster_data_file, bytes_to_copy);
             bytes_read += bytes_to_copy;
-            current_cluster++;
+            
+            if (bytes_read < file_size) {
+                current_cluster = find_next_cluster(current_cluster, file_size - bytes_read);
+            }
         }
         
         if (file_data[0] == 'B' && file_data[1] == 'M') {
