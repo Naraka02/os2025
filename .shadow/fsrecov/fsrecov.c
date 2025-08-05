@@ -203,6 +203,7 @@ void get_long_filename(struct fat32dent *entries, int entry_index, char *long_na
 }
 
 int is_bmp_file(const char *filename) {
+    printf("Checking if %s is a BMP file\n", filename);
     size_t len = strlen(filename);
     if (len < 4) return 0;
     
@@ -262,8 +263,6 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
     if (file_size == 0 || start_cluster < 2) {
         return;
     }
-
-    printf("Extracting BMP file: %s%s\n", path, filename);
     
     // Store file data in memory
     uint8_t *file_data = malloc(file_size);
