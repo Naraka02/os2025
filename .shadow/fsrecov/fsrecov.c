@@ -265,8 +265,8 @@ void carve_bmps(struct fat32hdr *hdr) {
         
         struct fat32dent *entries = (struct fat32dent *)cluster_data;
         
-        // Check if this looks like a directory cluster
-        int has_directory_entries = 0;
+        // Check for lfn entries
+        int has_lfn_entries = 0;
         
         for (uint32_t i = 0; i < g_entries_per_cluster && i < 4; i++) {
             struct fat32dent *entry = &entries[i];
