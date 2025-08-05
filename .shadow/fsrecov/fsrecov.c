@@ -246,35 +246,34 @@ void extract_bmp(void *cluster_data, uint32_t cluster_num) {
             if (is_bmp_extension(filename)) {
                 if (start_cluster >= 2 && file_size > 0) {
                     uint8_t *file_data = malloc(file_size);
-                    if (file_data) {
-                        uint32_t bytes_read = 0;
-                        uint32_t current_cluster = start_cluster;
+                    
+                    uint32_t bytes_read = 0;
+                    uint32_t current_cluster = start_cluster;
                         
-                        // Read clusters sequentially 
-                        while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
-                            void *cluster_data = get_cluster_data(g_hdr, current_cluster);
-                            if (!cluster_data) break;
-                            
-                            uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
-                                                    g_cluster_size : (file_size - bytes_read);
-                            
-                            memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
-                            bytes_read += bytes_to_copy;
-                            
-                            // Get next cluster from FAT
-                            current_cluster = get_next_cluster(current_cluster);
-                            if (current_cluster == 0x0FFFFFFF) break; // End of chain
-                        }
+                    // Read clusters sequentially 
+                    while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
+                        void *cluster_data = get_cluster_data(g_hdr, current_cluster);
+                        if (!cluster_data) break;
                         
-                        if (bytes_read >= file_size && bytes_read >= 14 && 
-                            file_data[0] == 'B' && file_data[1] == 'M') {
-                            char sha1_str[41];
-                            calculate_sha1(file_data, bytes_read, sha1_str);
-                            printf("%s  %s\n", sha1_str, filename);
-                        }
+                        uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
+                                                g_cluster_size : (file_size - bytes_read);
                         
-                        free(file_data);
+                        memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
+                        bytes_read += bytes_to_copy;
+                            
+                        // Get next cluster from FAT
+                        current_cluster = get_next_cluster(current_cluster);
+                        if (current_cluster == 0x0FFFFFFF) break; // End of chain
                     }
+                        
+                    if (bytes_read >= file_size && bytes_read >= 14 && 
+                        file_data[0] == 'B' && file_data[1] == 'M') {
+                        char sha1_str[41];
+                        calculate_sha1(file_data, bytes_read, sha1_str);
+                        printf("%s  %s\n", sha1_str, filename);
+                    }
+                        
+                    free(file_data);
                 }
             }
             
