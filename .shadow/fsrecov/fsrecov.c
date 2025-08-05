@@ -24,7 +24,6 @@ void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num);
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void carve_bmps(struct fat32hdr *hdr);
 void extract_bmp(uint32_t cluster_num);
-uint32_t find_next_cluster(uint32_t current_cluster);
 uint32_t get_next_cluster(uint32_t cluster);
 int is_bmp_extension(const char *filename);
 int is_directory_cluster(uint32_t cluster);
@@ -160,91 +159,6 @@ void calculate_sha1(const void *data, size_t len, char *sha1_str) {
     unlink(temp_filename);
 }
 
-uint32_t find_next_cluster(uint32_t current_cluster) {
-    void *current_data = get_cluster_data(g_hdr, current_cluster);
-    if (!current_data) return current_cluster + 1;
-    
-    uint8_t *current_bytes = (uint8_t *)current_data;
-    
-    uint32_t pixels_per_row = 21;  // 21 pixels * 3 bytes = 63 bytes per row
-    uint32_t bytes_per_row = pixels_per_row * 3;
-    uint32_t last_row_start = g_cluster_size - bytes_per_row;
-    if (last_row_start >= g_cluster_size) last_row_start = g_cluster_size - bytes_per_row;
-    
-    uint32_t best_cluster = current_cluster + 1;
-    uint32_t min_diff = UINT32_MAX;
-
-    uint32_t search_range[] = {1, 2, 3, 4, 5, -1, -2, -3, 6, 7, 8, 9, 10, -4, -5, 
-                              11, 12, 13, 14, 15, -6, -7, -8, 16, 17, 18, 19, 20, 
-                              -9, -10, 21, 22, 23, 24, 25, -11, -12, -13, 26, 27, 
-                              28, 29, 30, -14, -15, 31, 32, 33, 34, 35, -16, -17, 
-                              -18, 36, 37, 38, 39, 40, -19, -20};
-    int search_count = sizeof(search_range) / sizeof(search_range[0]);
-    
-    for (int i = 0; i < search_count; i++) {
-        int32_t offset = search_range[i];
-        uint32_t candidate = (offset > 0) ? current_cluster + offset : 
-                           (current_cluster >= -offset) ? current_cluster + offset : 0;
-        
-        if (candidate < 2 || candidate >= g_total_clusters + 2) continue;
-        
-        void *candidate_data = get_cluster_data(g_hdr, candidate);
-        if (!candidate_data) continue;
-        
-        uint8_t *candidate_bytes = (uint8_t *)candidate_data;
-
-        uint32_t total_diff = 0;
-        uint32_t valid_pixels = 0;
-        
-        for (uint32_t j = 0; j < pixels_per_row; j++) {
-            uint32_t current_offset = last_row_start + (j * 3);
-            uint32_t candidate_offset = j * 3;
-            
-            if (current_offset + 2 < g_cluster_size && candidate_offset + 2 < g_cluster_size) {
-                uint8_t curr_r = current_bytes[current_offset];
-                uint8_t curr_g = current_bytes[current_offset + 1];
-                uint8_t curr_b = current_bytes[current_offset + 2];
-                
-                uint8_t cand_r = candidate_bytes[candidate_offset];
-                uint8_t cand_g = candidate_bytes[candidate_offset + 1];
-                uint8_t cand_b = candidate_bytes[candidate_offset + 2];
-                
-                uint32_t diff = abs((int)curr_r - (int)cand_r) + 
-                               abs((int)curr_g - (int)cand_g) + 
-                               abs((int)curr_b - (int)cand_b);
-                
-                total_diff += diff;
-                valid_pixels++;
-            }
-        }
-        
-        if (valid_pixels > 0) {
-            uint32_t avg_diff = total_diff / valid_pixels;
-
-            // Check for non-zero RGB data
-            int non_zero_count = 0;
-            for (uint32_t k = 0; k < pixels_per_row && k * 3 + 2 < g_cluster_size; k++) {
-                if (candidate_bytes[k * 3] != 0 || 
-                    candidate_bytes[k * 3 + 1] != 0 || 
-                    candidate_bytes[k * 3 + 2] != 0) {
-                    non_zero_count++;
-                }
-            }
-            
-            if (avg_diff < min_diff && non_zero_count > 3) {
-                min_diff = avg_diff;
-                best_cluster = candidate;
-            }
-        }
-    }
-    
-    if (min_diff < 300) {
-        printf("%d\n",best_cluster - current_cluster);
-        return best_cluster;
-    }
-    
-    return current_cluster + 1;
-}
 
 void extract_single_lfn(uint8_t *lfn_data, char *partial_name) {
     int char_count = 0;
@@ -325,29 +239,51 @@ void extract_bmp(uint32_t cluster_num) {
         
         if (!is_bmp_extension(long_filename)) continue;
         if (start_cluster < 2 || file_size == 0) continue;
+
+        void *first_cluster_data = get_cluster_data(g_hdr, start_cluster);
+        if (!first_cluster_data) continue;
         
-        uint8_t *file_data = malloc(file_size);
+        uint8_t *first_cluster = (uint8_t *)first_cluster_data;
+        
+        if (first_cluster[0] != 'B' || first_cluster[1] != 'M') continue;
+
+        uint32_t bmp_file_size = *(uint32_t*)(first_cluster + 2);
+        uint32_t bitmap_offset = *(uint32_t*)(first_cluster + 10);
+        int32_t width = *(int32_t*)(first_cluster + 18);
+        int32_t height = *(int32_t*)(first_cluster + 22);
+
+        uint32_t actual_file_size = (bmp_file_size > 0 && bmp_file_size < file_size * 2) ? 
+                                    bmp_file_size : file_size;
+
+        uint32_t clusters_needed = (actual_file_size + g_cluster_size - 1) / g_cluster_size;
+        
+        uint8_t *file_data = malloc(actual_file_size);
         if (!file_data) continue;
         
         uint32_t bytes_read = 0;
         uint32_t current_cluster = start_cluster;
-        
-        while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
+
+        for (uint32_t cluster_count = 0; cluster_count < clusters_needed && 
+             current_cluster >= 2 && current_cluster < g_total_clusters + 2; cluster_count++) {
+            
             void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
             if (!cluster_data_file) break;
             
-            uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
-                                    g_cluster_size : (file_size - bytes_read);
+            uint32_t bytes_to_copy = (actual_file_size - bytes_read > g_cluster_size) ? 
+                                    g_cluster_size : (actual_file_size - bytes_read);
             
             memcpy(file_data + bytes_read, cluster_data_file, bytes_to_copy);
             bytes_read += bytes_to_copy;
+            current_cluster++;
             
-            current_cluster = find_next_cluster(current_cluster);
+            if (bytes_read >= actual_file_size) break;
         }
         
-        if (file_data[0] == 'B' && file_data[1] == 'M') {
+
+        if (bytes_read >= actual_file_size && file_data[0] == 'B' && file_data[1] == 'M') {
             char sha1_str[41];
             calculate_sha1(file_data, bytes_read, sha1_str);
+            
             printf("%s  %s\n", sha1_str, long_filename);
             fflush(stdout);
         }
