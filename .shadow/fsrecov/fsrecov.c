@@ -238,10 +238,9 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
         }
     }
     
-    // Increase threshold for RGB comparison (3 components * max 255 diff each = 765 max)
-    if (min_diff < 300) {
-        return best_cluster;
-    }
+    // if (min_diff < 300) {
+    //     return best_cluster;
+    // }
     
     return current_cluster + 1;
 }
