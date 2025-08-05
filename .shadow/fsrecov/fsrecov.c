@@ -166,7 +166,6 @@ void get_long_filename(struct fat32dent *entries, int entry_index, char *long_na
         
         // Extract characters from LFN entry
         uint8_t *lfn_data = (uint8_t *)lfn_entry;
-        uint8_t sequence = lfn_data[0] & 0x1F;  // Sequence number
         
         // Extract Unicode characters and convert to ASCII (simplified)
         // Characters are stored at offsets 1-10, 14-25, 28-31
