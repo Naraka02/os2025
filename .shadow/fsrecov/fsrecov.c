@@ -30,6 +30,8 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void fat32_name_to_string(const uint8_t *fat_name, char *output);
 void get_long_filename(struct fat32dent *entries, int entry_index, char *long_name);
+void recover_formatted_bmps(struct fat32hdr *hdr);
+int extract_bmp_from_cluster(struct fat32hdr *hdr, uint32_t cluster_num, uint32_t offset_in_cluster);
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -46,7 +48,11 @@ int main(int argc, char *argv[]) {
 
     init_globals(hdr);
 
+    // Try normal directory scanning first
     scan_directory(hdr, hdr->BPB_RootClus, "/");
+    
+    // If filesystem is formatted, try cluster-by-cluster recovery
+    recover_formatted_bmps(hdr);
 
     // file system traversal
     munmap(hdr, hdr->BPB_TotSec32 * hdr->BPB_BytsPerSec);
@@ -240,7 +246,7 @@ void calculate_sha1(const void *data, size_t len, char *sha1_str) {
     
     char result[128];
     if (fgets(result, sizeof(result), pipe) != NULL) {
-        // sha1sum output format: "hash  filename", we only need the hash part
+        // sha1sum output format: "hash  filename", take the hash part
         char *space = strchr(result, ' ');
         if (space) {
             *space = '\0';
@@ -296,22 +302,21 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
         printf("%s  %s\n", sha1_str, filename);
         fflush(stdout);
         
+        // // Create output directory
+        // mkdir("recovered_bmps", 0755);
         
-        // Create output directory
-        mkdir("recovered_bmps", 0755);
+        // // Generate output file path using the provided filename
+        // char output_path[512];
+        // snprintf(output_path, sizeof(output_path), "recovered_bmps/%s",  filename);
         
-        // Generate output file path using the provided filename
-        char output_path[512];
-        snprintf(output_path, sizeof(output_path), "recovered_bmps/%s",  filename);
-        
-        // Write the recovered BMP file
-        FILE *outfile = fopen(output_path, "wb");
-        if (outfile) {
-            fwrite(file_data, 1, bytes_read, outfile);
-            fclose(outfile);
-        } else {
-            printf("Failed to write recovered file: %s\n", output_path);
-        }
+        // // Write the recovered BMP file
+        // FILE *outfile = fopen(output_path, "wb");
+        // if (outfile) {
+        //     fwrite(file_data, 1, bytes_read, outfile);
+        //     fclose(outfile);
+        // } else {
+        //     printf("Failed to write recovered file: %s\n", output_path);
+        // }
         
     }
     
@@ -372,4 +377,115 @@ void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path
         
         current_cluster = get_next_cluster(g_fat_table, current_cluster);
     }
+}
+
+// Extract BMP file starting from a specific cluster and offset
+int extract_bmp_from_cluster(struct fat32hdr *hdr, uint32_t cluster_num, uint32_t offset_in_cluster) {
+    void *cluster_data = get_cluster_data(hdr, cluster_num);
+    if (!cluster_data) return 0;
+    
+    uint8_t *bmp_start = (uint8_t *)cluster_data + offset_in_cluster;
+    
+    // Check BMP signature
+    if (bmp_start[0] != 'B' || bmp_start[1] != 'M') {
+        return 0;
+    }
+    
+    // Get file size from BMP header (bytes 2-5)
+    uint32_t bmp_size = *(uint32_t *)(bmp_start + 2);
+    
+    // Sanity check for BMP size (should be reasonable)
+    if (bmp_size < 54 || bmp_size > 100 * 1024 * 1024) { // Min 54 bytes, max 100MB
+        return 0;
+    }
+    
+    // Additional BMP header validation
+    uint32_t data_offset = *(uint32_t *)(bmp_start + 10);
+    uint32_t header_size = *(uint32_t *)(bmp_start + 14);
+    
+    if (data_offset < 54 || header_size < 40) {
+        return 0;
+    }
+    
+    // Allocate memory for the entire BMP file
+    uint8_t *bmp_data = malloc(bmp_size);
+    if (!bmp_data) {
+        printf("Memory allocation failed for BMP recovery\n");
+        return 0;
+    }
+    
+    // Read the BMP data across clusters
+    uint32_t bytes_read = 0;
+    uint32_t current_cluster = cluster_num;
+    uint32_t current_offset = offset_in_cluster;
+    
+    while (bytes_read < bmp_size && current_cluster >= 2) {
+        void *current_cluster_data = get_cluster_data(hdr, current_cluster);
+        if (!current_cluster_data) break;
+        
+        uint32_t available_in_cluster = g_cluster_size - current_offset;
+        uint32_t bytes_to_copy = (bmp_size - bytes_read > available_in_cluster) ? 
+                                available_in_cluster : (bmp_size - bytes_read);
+        
+        memcpy(bmp_data + bytes_read, (uint8_t *)current_cluster_data + current_offset, bytes_to_copy);
+        bytes_read += bytes_to_copy;
+        
+        // Move to next cluster
+        current_cluster++;
+        current_offset = 0; // Start from beginning of next cluster
+        
+        // Check if we've read enough or reached end of data area
+        if (current_cluster >= g_total_clusters + 2) break;
+    }
+    
+    // Verify we read the complete file
+    if (bytes_read >= bmp_size) {
+        // Calculate SHA1
+        char sha1_str[41];
+        calculate_sha1(bmp_data, bmp_size, sha1_str);
+        
+        // Generate filename based on cluster location
+        char filename[256];
+        snprintf(filename, sizeof(filename), "recovered_cluster_%u_offset_%u.bmp", 
+                cluster_num, offset_in_cluster);
+        
+        printf("%s  %s\n", sha1_str, filename);
+        fflush(stdout);
+        
+        free(bmp_data);
+        return 1; // Successfully extracted
+    }
+    
+    free(bmp_data);
+    return 0;
+}
+
+// Scan all data clusters for BMP file signatures
+void recover_formatted_bmps(struct fat32hdr *hdr) {
+    printf("Scanning for BMP files in formatted filesystem...\n");
+    
+    uint32_t recovered_count = 0;
+    
+    // Scan all data clusters
+    for (uint32_t cluster = 2; cluster < g_total_clusters + 2; cluster++) {
+        void *cluster_data = get_cluster_data(hdr, cluster);
+        if (!cluster_data) continue;
+        
+        uint8_t *data = (uint8_t *)cluster_data;
+        
+        // Scan through the cluster looking for BMP signatures
+        for (uint32_t offset = 0; offset < g_cluster_size - 1; offset++) {
+            // Look for BMP signature "BM"
+            if (data[offset] == 'B' && data[offset + 1] == 'M') {
+                // Try to extract BMP starting from this position
+                if (extract_bmp_from_cluster(hdr, cluster, offset)) {
+                    recovered_count++;
+                    // Skip ahead to avoid finding overlapping BMPs
+                    offset += 54; // Skip BMP header
+                }
+            }
+        }
+    }
+    
+    printf("Recovered %u BMP files from formatted filesystem\n", recovered_count);
 }
