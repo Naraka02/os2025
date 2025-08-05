@@ -345,7 +345,7 @@ void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path
             char long_filename[256];
             
             // Try to get long filename first
-            get_long_filename(entries, i, long_filename);
+            //get_long_filename(entries, i, long_filename);
             
             if (strlen(long_filename) > 0) {
                 strcpy(filename, long_filename);
