@@ -261,8 +261,7 @@ void extract_bmp(void *cluster_data, uint32_t cluster_num) {
                         memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
                         bytes_read += bytes_to_copy;
                             
-                        // Get next cluster from FAT
-                        current_cluster = get_next_cluster(current_cluster);
+                        current_cluster++;
                         if (current_cluster == 0x0FFFFFFF) break; // End of chain
                     }
                         
