@@ -200,82 +200,77 @@ void extract_bmp(uint32_t cluster_num) {
     for (uint32_t i = 0; i < g_entries_per_cluster; i++) {
         struct fat32dent *entry = &entries[i];
         
-        if (entry->DIR_Name[0] == 0x00) break; // End of entries
+        if (entry->DIR_Name[0] == 0x00) break;
         
-        // Check for standard entry
-        if ((entry->DIR_Attr & 0x0F) != 0x0F) {
-            uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
-            uint32_t file_size = entry->DIR_FileSize;
+        // 只处理标准entry（非LFN）
+        if ((entry->DIR_Attr & 0x0F) == 0x0F) continue;
+        
+        uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
+        uint32_t file_size = entry->DIR_FileSize;
+        
+        // 向前收集LFN entries
+        char long_filename[256] = "";
+        int lfn_start = i - 1;
+        
+        while (lfn_start >= 0) {
+            struct fat32dent *lfn_entry = &entries[lfn_start];
             
-            // Collect long file name (LFN) entries
-            char long_filename[256] = "";
-            int lfn_start = i - 1;
+            // 如果不是LFN entry，停止搜索
+            if ((lfn_entry->DIR_Attr & 0x0F) != 0x0F) break;
             
-            // Search for LFN entries backwards
-            while (lfn_start >= 0) {
-                struct fat32dent *lfn_entry = &entries[lfn_start];
-
-                // Check if it is an LFN entry
-                if ((lfn_entry->DIR_Attr & 0x0F) == 0x0F) {
-                    uint8_t *lfn_data = (uint8_t *)lfn_entry;
-                    uint8_t is_last = (lfn_data[0] & 0x40) ? 1 : 0;
-                    
-                    char partial_name[256];
-                    extract_single_lfn(lfn_data, partial_name);
-                    
-                    if (strlen(long_filename) == 0) {
-                        strcpy(long_filename, partial_name);
-                    } else {
-                        char temp[256];
-                        strcpy(temp, long_filename);
-                        strcat(temp, partial_name);
-                        strcpy(long_filename, temp);
-                    }
-                    
-                    // If it is the last LFN entry (highest sequence number), stop searching
-                    if (is_last) {
-                        break;
-                    }
-                    
-                    lfn_start--;
-                } else {
-                    printf("Skipping non-LFN entry: %.*s\n", 11, lfn_entry->DIR_Name);
-                    break;
-                }
+            uint8_t *lfn_data = (uint8_t *)lfn_entry;
+            uint8_t is_last = (lfn_data[0] & 0x40) ? 1 : 0;
+            
+            char partial_name[256];
+            extract_single_lfn(lfn_data, partial_name);
+            
+            if (strlen(long_filename) == 0) {
+                strcpy(long_filename, partial_name);
+            } else {
+                char temp[256];
+                strcpy(temp, long_filename);
+                strcat(temp, partial_name);
+                strcpy(long_filename, temp);
             }
             
-            if (is_bmp_extension(long_filename)) {
-                if (start_cluster >= 2 && file_size > 0) {
-                    uint8_t *file_data = malloc(file_size);
-                    if (file_data) {
-                        uint32_t bytes_read = 0;
-                        uint32_t current_cluster = start_cluster;
-                        
-                        while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
-                            void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
-                            if (!cluster_data_file) break;
-                            
-                            uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
-                                                    g_cluster_size : (file_size - bytes_read);
-                            
-                            memcpy(file_data + bytes_read, cluster_data_file, bytes_to_copy);
-                            bytes_read += bytes_to_copy;
-                            current_cluster++;
-                        }
-                        
-                        if (bytes_read >= file_size && bytes_read >= 14 && 
-                            file_data[0] == 'B' && file_data[1] == 'M') {
-                            char sha1_str[41];
-                            calculate_sha1(file_data, bytes_read, sha1_str);
-                            printf("%s  %s\n", sha1_str, long_filename);
-                            fflush(stdout);
-                        }
-                        
-                        free(file_data);
-                    }
-                }
-            }
+            if (is_last) break;
+            lfn_start--;
         }
+        
+        // 检查是否为BMP文件
+        if (!is_bmp_extension(long_filename)) continue;
+        if (start_cluster < 2 || file_size == 0) continue;
+        
+        // 分配内存读取文件
+        uint8_t *file_data = malloc(file_size);
+        if (!file_data) continue;
+        
+        uint32_t bytes_read = 0;
+        uint32_t current_cluster = start_cluster;
+        
+        // 读取文件数据
+        while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
+            void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
+            if (!cluster_data_file) break;
+            
+            uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
+                                    g_cluster_size : (file_size - bytes_read);
+            
+            memcpy(file_data + bytes_read, cluster_data_file, bytes_to_copy);
+            bytes_read += bytes_to_copy;
+            current_cluster++;
+        }
+        
+        // 验证BMP文件并输出
+        if (bytes_read >= file_size && bytes_read >= 14 && 
+            file_data[0] == 'B' && file_data[1] == 'M') {
+            char sha1_str[41];
+            calculate_sha1(file_data, bytes_read, sha1_str);
+            printf("%s  %s\n", sha1_str, long_filename);
+            fflush(stdout);
+        }
+        
+        free(file_data);
     }
 }
 
