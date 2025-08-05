@@ -7,7 +7,6 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <openssl/sha.h>
 #include <ctype.h>
 #include "fat32.h"
 
@@ -262,15 +261,53 @@ int is_bmp_file(const char *filename) {
     return (strcasecmp(ext, ".bmp") == 0);
 }
 
-// 计算SHA1哈希值
+// 计算SHA1哈希值 (使用外部sha1sum工具)
 void calculate_sha1(const void *data, size_t len, char *sha1_str) {
-    unsigned char hash[SHA_DIGEST_LENGTH];
-    SHA1(data, len, hash);
-    
-    for (int i = 0; i < SHA_DIGEST_LENGTH; i++) {
-        sprintf(sha1_str + i * 2, "%02x", hash[i]);
+    // 创建临时文件
+    char temp_filename[] = "/tmp/fsrecov_temp_XXXXXX";
+    int temp_fd = mkstemp(temp_filename);
+    if (temp_fd == -1) {
+        strcpy(sha1_str, "error_creating_temp_file");
+        return;
     }
-    sha1_str[SHA_DIGEST_LENGTH * 2] = '\0';
+    
+    // 写入数据到临时文件
+    ssize_t bytes_written = write(temp_fd, data, len);
+    close(temp_fd);
+    
+    if (bytes_written != (ssize_t)len) {
+        unlink(temp_filename);
+        strcpy(sha1_str, "error_writing_temp_file");
+        return;
+    }
+    
+    // 执行sha1sum命令
+    char command[512];
+    snprintf(command, sizeof(command), "sha1sum %s", temp_filename);
+    
+    FILE *pipe = popen(command, "r");
+    if (!pipe) {
+        unlink(temp_filename);
+        strcpy(sha1_str, "error_executing_sha1sum");
+        return;
+    }
+    
+    // 读取sha1sum的输出
+    char result[128];
+    if (fgets(result, sizeof(result), pipe) != NULL) {
+        // sha1sum输出格式: "hash  filename"，我们只要hash部分
+        char *space = strchr(result, ' ');
+        if (space) {
+            *space = '\0';
+        }
+        strncpy(sha1_str, result, 40);
+        sha1_str[40] = '\0';
+    } else {
+        strcpy(sha1_str, "error_reading_sha1sum_output");
+    }
+    
+    pclose(pipe);
+    unlink(temp_filename);
 }
 
 // 提取BMP文件
@@ -316,7 +353,7 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
         fat32_name_to_string(entry->DIR_Name, filename);
         
         // 计算SHA1
-        char sha1_str[SHA_DIGEST_LENGTH * 2 + 1];
+        char sha1_str[41]; // SHA1是40个字符 + null终止符
         calculate_sha1(file_data, bytes_read, sha1_str);
         
         // 创建输出目录
