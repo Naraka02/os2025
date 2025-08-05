@@ -24,7 +24,7 @@ void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num);
 void calculate_sha1(const void *data, size_t len, char *sha1_str);
 void carve_bmps(struct fat32hdr *hdr);
 void extract_bmp(uint32_t cluster_num);
-uint32_t find_next_cluster(uint32_t current_cluster, uint32_t remaining_bytes);
+uint32_t find_next_cluster(uint32_t current_cluster);
 uint32_t get_next_cluster(uint32_t cluster);
 int is_bmp_extension(const char *filename);
 int is_directory_cluster(uint32_t cluster);
@@ -160,57 +160,76 @@ void calculate_sha1(const void *data, size_t len, char *sha1_str) {
     unlink(temp_filename);
 }
 
-uint32_t find_next_cluster(uint32_t current_cluster, uint32_t remaining_bytes) {
-    uint32_t next_cluster = current_cluster + 1;
+uint32_t find_next_cluster(uint32_t current_cluster) {
+    void *current_data = get_cluster_data(g_hdr, current_cluster);
+    if (!current_data) return current_cluster + 1;
     
-    if (next_cluster < g_total_clusters + 2) {
-        void *cluster_data = get_cluster_data(g_hdr, next_cluster);
-        if (cluster_data) {
-            uint8_t *data = (uint8_t *)cluster_data;
-            int non_zero_count = 0;
-            for (uint32_t i = 0; i < g_cluster_size && i < 64; i++) {
-                if (data[i] != 0) non_zero_count++;
-            }
-            if (non_zero_count > 8) {
-                return next_cluster;
-            }
-        }
-    }
+    uint8_t *current_bytes = (uint8_t *)current_data;
     
-    for (int offset = 2; offset <= 10; offset++) {
-        uint32_t candidate = current_cluster + offset;
-        if (candidate < g_total_clusters + 2) {
-            void *cluster_data = get_cluster_data(g_hdr, candidate);
-            if (cluster_data) {
-                uint8_t *data = (uint8_t *)cluster_data;
-                int non_zero_count = 0;
-                for (uint32_t i = 0; i < g_cluster_size && i < 64; i++) {
-                    if (data[i] != 0) non_zero_count++;
-                }
-                if (non_zero_count > 16) {
-                    return candidate;
-                }
+    // 获取当前cluster最后一行的像素值（假设每行有合理的字节数）
+    // 对于BMP，我们检查cluster末尾的一行像素
+    uint32_t bytes_per_row = 64; // 假设每行64字节（可根据BMP格式调整）
+    uint32_t last_row_start = g_cluster_size - bytes_per_row;
+    if (last_row_start >= g_cluster_size) last_row_start = g_cluster_size - bytes_per_row;
+    
+    uint32_t best_cluster = current_cluster + 1;
+    uint32_t min_diff = UINT32_MAX;
+    
+    // 搜索范围：优先检查连续的，然后检查附近的cluster
+    uint32_t search_range[] = {1, 2, 3, 4, 5, -1, -2, -3, 6, 7, 8, 9, 10, -4, -5};
+    int search_count = sizeof(search_range) / sizeof(search_range[0]);
+    
+    for (int i = 0; i < search_count; i++) {
+        int32_t offset = search_range[i];
+        uint32_t candidate = (offset > 0) ? current_cluster + offset : 
+                           (current_cluster >= -offset) ? current_cluster + offset : 0;
+        
+        if (candidate < 2 || candidate >= g_total_clusters + 2) continue;
+        
+        void *candidate_data = get_cluster_data(g_hdr, candidate);
+        if (!candidate_data) continue;
+        
+        uint8_t *candidate_bytes = (uint8_t *)candidate_data;
+        
+        // 计算当前cluster最后一行与候选cluster第一行的像素差值
+        uint32_t total_diff = 0;
+        uint32_t valid_pixels = 0;
+        
+        for (uint32_t j = 0; j < bytes_per_row; j++) {
+            if (last_row_start + j < g_cluster_size && j < g_cluster_size) {
+                uint8_t current_pixel = current_bytes[last_row_start + j];
+                uint8_t candidate_pixel = candidate_bytes[j];
+                
+                // 计算像素差值
+                uint32_t diff = abs((int)current_pixel - (int)candidate_pixel);
+                total_diff += diff;
+                valid_pixels++;
             }
         }
         
-        if (current_cluster >= offset) {
-            candidate = current_cluster - offset;
-            if (candidate >= 2) {
-                void *cluster_data = get_cluster_data(g_hdr, candidate);
-                if (cluster_data) {
-                    uint8_t *data = (uint8_t *)cluster_data;
-                    int non_zero_count = 0;
-                    for (uint32_t i = 0; i < g_cluster_size && i < 64; i++) {
-                        if (data[i] != 0) non_zero_count++;
-                    }
-                    if (non_zero_count > 16) {
-                        return candidate;
-                    }
-                }
+        if (valid_pixels > 0) {
+            uint32_t avg_diff = total_diff / valid_pixels;
+            
+            // 额外检查：确保候选cluster包含合理的数据
+            int non_zero_count = 0;
+            for (uint32_t k = 0; k < 64; k++) {
+                if (candidate_bytes[k] != 0) non_zero_count++;
+            }
+            
+            // 如果差值更小且包含合理数据，选择这个cluster
+            if (avg_diff < min_diff && non_zero_count > 8) {
+                min_diff = avg_diff;
+                best_cluster = candidate;
             }
         }
     }
     
+    // 如果找到了合理的匹配（差值不是太大），返回最佳匹配
+    if (min_diff < 128) {  // 阈值可调整
+        return best_cluster;
+    }
+    
+    // 否则返回连续的下一个cluster
     return current_cluster + 1;
 }
 
@@ -311,7 +330,7 @@ void extract_bmp(uint32_t cluster_num) {
             bytes_read += bytes_to_copy;
             
             if (bytes_read < file_size) {
-                current_cluster = find_next_cluster(current_cluster, file_size - bytes_read);
+                current_cluster = find_next_cluster(current_cluster);
             }
         }
         
