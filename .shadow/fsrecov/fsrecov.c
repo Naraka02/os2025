@@ -324,9 +324,7 @@ void extract_bmp(uint32_t cluster_num) {
             memcpy(file_data + bytes_read, cluster_data_file, bytes_to_copy);
             bytes_read += bytes_to_copy;
             
-            if (bytes_read < file_size) {
-                current_cluster = find_next_cluster(current_cluster);
-            }
+            current_cluster = find_next_cluster(current_cluster);
         }
         
         if (file_data[0] == 'B' && file_data[1] == 'M') {
