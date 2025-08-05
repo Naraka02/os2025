@@ -262,6 +262,8 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
     if (file_size == 0 || start_cluster < 2) {
         return;
     }
+
+    printf("Extracting BMP file: %s%s\n", path, filename);
     
     // Store file data in memory
     uint8_t *file_data = malloc(file_size);
