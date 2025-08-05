@@ -218,7 +218,6 @@ void extract_bmp(uint32_t cluster_num) {
                 // Check if it is an LFN entry
                 if ((lfn_entry->DIR_Attr & 0x0F) == 0x0F) {
                     uint8_t *lfn_data = (uint8_t *)lfn_entry;
-                    uint8_t sequence = lfn_data[0] & 0x1F;
                     uint8_t is_last = (lfn_data[0] & 0x40) ? 1 : 0;
                     
                     char partial_name[256];
@@ -240,6 +239,7 @@ void extract_bmp(uint32_t cluster_num) {
                     
                     lfn_start--;
                 } else {
+                    printf("Skipping non-LFN entry: %.*s\n", 11, lfn_entry->DIR_Name);
                     break;
                 }
             }
