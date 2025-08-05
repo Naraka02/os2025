@@ -10,12 +10,19 @@
 #include <ctype.h>
 #include "fat32.h"
 
+struct fat32hdr *g_hdr = NULL;
+uint32_t *g_fat_table = NULL;
+uint32_t g_cluster_size = 0;
+uint32_t g_total_clusters = 0;
+uint32_t g_data_start_sector = 0;
+uint32_t g_entries_per_cluster = 0;
+
 void *map_disk(const char *fname);
+void init_globals(struct fat32hdr *hdr);
 void print_fat32_info(struct fat32hdr *hdr);
 uint32_t *get_fat_table(struct fat32hdr *hdr);
 void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num);
 uint32_t get_next_cluster(uint32_t *fat_table, uint32_t cluster_num);
-void scan_clusters(struct fat32hdr *hdr);
 void recover_bmp_files(struct fat32hdr *hdr);
 void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path);
 int is_bmp_file(const char *filename);
@@ -36,11 +43,11 @@ int main(int argc, char *argv[]) {
     // map disk image to memory
     struct fat32hdr *hdr = map_disk(argv[1]);
 
+    // Initialize global variables
+    init_globals(hdr);
+
     // Print FAT32 filesystem information
     print_fat32_info(hdr);
-
-    // Scan clusters
-    scan_clusters(hdr);
 
     // Recover BMP files
     recover_bmp_files(hdr);
@@ -84,6 +91,16 @@ release:
     exit(1);
 }
 
+void init_globals(struct fat32hdr *hdr) {
+    g_hdr = hdr;
+    g_fat_table = get_fat_table(hdr);
+    g_cluster_size = hdr->BPB_BytsPerSec * hdr->BPB_SecPerClus;
+    g_total_clusters = (hdr->BPB_TotSec32 - hdr->BPB_RsvdSecCnt - 
+                       (hdr->BPB_NumFATs * hdr->BPB_FATSz32)) / hdr->BPB_SecPerClus;
+    g_data_start_sector = hdr->BPB_RsvdSecCnt + (hdr->BPB_NumFATs * hdr->BPB_FATSz32);
+    g_entries_per_cluster = g_cluster_size / sizeof(struct fat32dent);
+}
+
 void print_fat32_info(struct fat32hdr *hdr) {
     printf("=== FAT32 File System Information ===\n");
     
@@ -102,18 +119,14 @@ void print_fat32_info(struct fat32hdr *hdr) {
     printf("Volume Label: %.11s\n", hdr->BS_VolLab);
     printf("File System Type: %.8s\n", hdr->BS_FilSysType);
     
-    // Calculated values
-    uint32_t bytes_per_cluster = hdr->BPB_BytsPerSec * hdr->BPB_SecPerClus;
-    uint32_t total_clusters = (hdr->BPB_TotSec32 - hdr->BPB_RsvdSecCnt - 
-                              (hdr->BPB_NumFATs * hdr->BPB_FATSz32)) / hdr->BPB_SecPerClus;
+    // Calculated values (using global variables)
     uint32_t fat_start_sector = hdr->BPB_RsvdSecCnt;
-    uint32_t data_start_sector = hdr->BPB_RsvdSecCnt + (hdr->BPB_NumFATs * hdr->BPB_FATSz32);
     
     printf("\n=== Calculated Information ===\n");
-    printf("Bytes per Cluster: %u\n", bytes_per_cluster);
-    printf("Total Clusters: %u\n", total_clusters);
+    printf("Bytes per Cluster: %u\n", g_cluster_size);
+    printf("Total Clusters: %u\n", g_total_clusters);
     printf("FAT Start Sector: %u\n", fat_start_sector);
-    printf("Data Start Sector: %u\n", data_start_sector);
+    printf("Data Start Sector: %u\n", g_data_start_sector);
     printf("Total Size: %u bytes (%.2f MB)\n", 
            hdr->BPB_TotSec32 * hdr->BPB_BytsPerSec,
            (double)(hdr->BPB_TotSec32 * hdr->BPB_BytsPerSec) / (1024 * 1024));
@@ -138,11 +151,8 @@ void *get_cluster_data(struct fat32hdr *hdr, uint32_t cluster_num) {
     }
     
     uint8_t *disk = (uint8_t *)hdr;
-    uint32_t data_start_sector = hdr->BPB_RsvdSecCnt + (hdr->BPB_NumFATs * hdr->BPB_FATSz32);
-    uint32_t cluster_size = hdr->BPB_BytsPerSec * hdr->BPB_SecPerClus;
-    
-    uint32_t cluster_offset = data_start_sector * hdr->BPB_BytsPerSec + 
-                              (cluster_num - 2) * cluster_size;
+    uint32_t cluster_offset = g_data_start_sector * hdr->BPB_BytsPerSec + 
+                              (cluster_num - 2) * g_cluster_size;
     
     return disk + cluster_offset;
 }
@@ -155,81 +165,6 @@ uint32_t get_next_cluster(uint32_t *fat_table, uint32_t cluster_num) {
     }
     
     return next_cluster;
-}
-
-void scan_clusters(struct fat32hdr *hdr) {
-    printf("=== Cluster Scan ===\n");
-    
-    uint32_t *fat_table = get_fat_table(hdr);
-    uint32_t total_clusters = (hdr->BPB_TotSec32 - hdr->BPB_RsvdSecCnt - 
-                              (hdr->BPB_NumFATs * hdr->BPB_FATSz32)) / hdr->BPB_SecPerClus;
-    
-    uint32_t free_clusters = 0;
-    uint32_t used_clusters = 0;
-    uint32_t bad_clusters = 0;
-    
-    printf("Scanning %u clusters...\n", total_clusters);
-    
-    for (uint32_t i = 2; i < total_clusters + 2; i++) {
-        uint32_t fat_entry = fat_table[i] & 0x0FFFFFFF;
-        
-        if (fat_entry == 0) {
-            free_clusters++;
-        } else if (fat_entry == 0x0FFFFFF7) {
-            bad_clusters++;
-            printf("Bad cluster found: %u\n", i);
-        } else if (fat_entry >= 0x0FFFFFF8) {
-            used_clusters++;
-        } else {
-            used_clusters++;
-        }
-        
-        if (i < 10 || i > total_clusters + 2 - 5) {
-            printf("Cluster %u: FAT entry = 0x%08X", i, fat_entry);
-            if (fat_entry == 0) {
-                printf(" (FREE)");
-            } else if (fat_entry == 0x0FFFFFF7) {
-                printf(" (BAD)");
-            } else if (fat_entry >= 0x0FFFFFF8) {
-                printf(" (EOF)");
-            } else {
-                printf(" (-> %u)", fat_entry);
-            }
-            printf("\n");
-        }
-    }
-    
-    printf("\nCluster Statistics:\n");
-    printf("Total clusters: %u\n", total_clusters);
-    printf("Free clusters: %u (%.2f%%)\n", free_clusters, 
-           (double)free_clusters / total_clusters * 100);
-    printf("Used clusters: %u (%.2f%%)\n", used_clusters,
-           (double)used_clusters / total_clusters * 100);
-    printf("Bad clusters: %u\n", bad_clusters);
-    
-    printf("\nRoot directory cluster chain:\n");
-    uint32_t current_cluster = hdr->BPB_RootClus;
-    int chain_length = 0;
-    
-    while (current_cluster != 0 && current_cluster >= 2 && chain_length < 10) {
-        printf("Cluster %u", current_cluster);
-        
-        uint32_t next = get_next_cluster(fat_table, current_cluster);
-        if (next == 0) {
-            printf(" (EOF)\n");
-        } else {
-            printf(" -> ");
-        }
-        
-        current_cluster = next;
-        chain_length++;
-    }
-    
-    if (chain_length >= 10) {
-        printf("... (chain continues)\n");
-    }
-    
-    printf("\n");
 }
 
 // 将FAT32文件名转换为普通字符串
@@ -328,22 +263,20 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
     }
     
     // 读取文件的所有cluster
-    uint32_t *fat_table = get_fat_table(hdr);
     uint32_t current_cluster = start_cluster;
     uint32_t bytes_read = 0;
-    uint32_t cluster_size = hdr->BPB_BytsPerSec * hdr->BPB_SecPerClus;
     
     while (current_cluster >= 2 && bytes_read < file_size) {
         void *cluster_data = get_cluster_data(hdr, current_cluster);
         if (!cluster_data) break;
         
-        uint32_t bytes_to_copy = (file_size - bytes_read > cluster_size) ? 
-                                cluster_size : (file_size - bytes_read);
+        uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
+                                g_cluster_size : (file_size - bytes_read);
         
         memcpy(file_data + bytes_read, cluster_data, bytes_to_copy);
         bytes_read += bytes_to_copy;
         
-        current_cluster = get_next_cluster(fat_table, current_cluster);
+        current_cluster = get_next_cluster(g_fat_table, current_cluster);
     }
     
     // 验证是否是有效的BMP文件（检查BMP文件头）
@@ -383,14 +316,10 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
     free(file_data);
 }
 
-// 扫描目录寻找BMP文件
 void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path) {
     if (cluster_num < 2) return;
     
-    uint32_t *fat_table = get_fat_table(hdr);
     uint32_t current_cluster = cluster_num;
-    uint32_t cluster_size = hdr->BPB_BytsPerSec * hdr->BPB_SecPerClus;
-    uint32_t entries_per_cluster = cluster_size / sizeof(struct fat32dent);
     
     while (current_cluster >= 2) {
         void *cluster_data = get_cluster_data(hdr, current_cluster);
@@ -398,7 +327,7 @@ void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path
         
         struct fat32dent *entries = (struct fat32dent *)cluster_data;
         
-        for (uint32_t i = 0; i < entries_per_cluster; i++) {
+        for (uint32_t i = 0; i < g_entries_per_cluster; i++) {
             struct fat32dent *entry = &entries[i];
             
             // 跳过空条目和删除的文件
@@ -430,7 +359,7 @@ void scan_directory(struct fat32hdr *hdr, uint32_t cluster_num, const char *path
             }
         }
         
-        current_cluster = get_next_cluster(fat_table, current_cluster);
+        current_cluster = get_next_cluster(g_fat_table, current_cluster);
     }
 }
 
