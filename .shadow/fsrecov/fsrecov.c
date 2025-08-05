@@ -238,9 +238,10 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
         }
     }
     
-    // if (min_diff < 300) {
-    //     return best_cluster;
-    // }
+    if (min_diff < 300) {
+        printf("%d\n",best_cluster - current_cluster);
+        return best_cluster;
+    }
     
     return current_cluster + 1;
 }
