@@ -278,12 +278,12 @@ void carve_bmps(struct fat32hdr *hdr) {
             if ((entry->DIR_Attr & 0x0F) == 0x0F ||  // LFN entry
                 (entry->DIR_Name[0] != 0xE5 && 
                  (entry->DIR_Attr & (ATTR_DIRECTORY | ATTR_ARCHIVE)))) {
-                has_directory_entries = 1;
+                has_lfn_entries = 1;
                 break;
             }
         }
         
-        if (has_directory_entries) {
+        if (has_lfn_entries) {
             extract_bmp(cluster_data, cluster);
         }
     }
