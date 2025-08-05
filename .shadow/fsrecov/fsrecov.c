@@ -208,36 +208,36 @@ void extract_bmp(uint32_t cluster_num) {
         uint32_t start_cluster = (entry->DIR_FstClusHI << 16) | entry->DIR_FstClusLO;
         uint32_t file_size = entry->DIR_FileSize;
         
-        // Collect LFN entry backwards
-        char long_filename[256] = "";
+        // Collect LFN entries backwards
+        char filename[256] = "";
         int lfn_start = i - 1;
         
-        while (lfn_start >= 0) {
+        char lfn_fragments[20][14]; // Max 20 LFN entries, 13 chars each + null terminator
+        int fragment_count = 0;
+        
+        while (lfn_start >= 0 && fragment_count < 20) {
             struct fat32dent *lfn_entry = &entries[lfn_start];
             
             // Stop if not LFN entry
             if ((lfn_entry->DIR_Attr & 0x0F) != 0x0F) break;
             
             uint8_t *lfn_data = (uint8_t *)lfn_entry;
+            uint8_t sequence = lfn_data[0] & 0x1F;
             uint8_t is_last = (lfn_data[0] & 0x40) ? 1 : 0;
             
-            char partial_name[256];
-            extract_single_lfn(lfn_data, partial_name);
-            
-            if (strlen(long_filename) == 0) {
-                strcpy(long_filename, partial_name);
-            } else {
-                char temp[256];
-                strcpy(temp, long_filename);
-                strcat(temp, partial_name);
-                strcpy(long_filename, temp);
-            }
+            extract_single_lfn(lfn_data, lfn_fragments[fragment_count]);
+            fragment_count++;
             
             if (is_last) break;
             lfn_start--;
         }
         
-        if (!is_bmp_extension(long_filename)) continue;
+        for (int j = fragment_count - 1; j >= 0; j--) {
+            strcat(filename, lfn_fragments[j]);
+        }
+        
+        // Check if it's a BMP file (both extension and content)
+        if (!is_bmp_extension(filename)) continue;
         if (start_cluster < 2 || file_size == 0) continue;
         
         uint8_t *file_data = malloc(file_size);
@@ -246,19 +246,9 @@ void extract_bmp(uint32_t cluster_num) {
         uint32_t bytes_read = 0;
         uint32_t current_cluster = start_cluster;
         
-        // Read the first byte of the first cluster
-        void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
-        if (cluster_data_file) {
-            uint8_t first_byte = *(uint8_t *)cluster_data_file;
-            printf("First byte: 0x%02X (%c)\n", first_byte, 
-                   (first_byte >= 32 && first_byte <= 126) ? first_byte : '.');
-            uint8_t second_byte = *(uint8_t *)(cluster_data_file + 1);  
-            printf("Second byte: 0x%02X (%c)\n", second_byte, 
-                   (second_byte >= 32 && second_byte <= 126) ? second_byte : '.');
-        }
-        
+        // Read file data cluster by cluster
         while (bytes_read < file_size && current_cluster >= 2 && current_cluster < g_total_clusters + 2) {
-            cluster_data_file = get_cluster_data(g_hdr, current_cluster);
+            void *cluster_data_file = get_cluster_data(g_hdr, current_cluster);
             if (!cluster_data_file) break;
             
             uint32_t bytes_to_copy = (file_size - bytes_read > g_cluster_size) ? 
@@ -269,11 +259,16 @@ void extract_bmp(uint32_t cluster_num) {
             current_cluster++;
         }
         
-        if (file_data[0] == 'B' && file_data[1] == 'M') {
-            char sha1_str[41];
-            calculate_sha1(file_data, bytes_read, sha1_str);
-            printf("%s  %s\n", sha1_str, long_filename);
-            fflush(stdout);
+        // Validate BMP file signature and basic header
+        if (bytes_read >= 14 && file_data[0] == 'B' && file_data[1] == 'M') {
+            // Additional BMP validation - check if file size in header matches
+            uint32_t bmp_file_size = *(uint32_t*)(file_data + 2);
+            if (bmp_file_size == file_size || (bmp_file_size > 0 && bmp_file_size <= file_size + g_cluster_size)) {
+                char sha1_str[41];
+                calculate_sha1(file_data, bytes_read, sha1_str);
+                printf("%s  %s\n", sha1_str, filename);
+                fflush(stdout);
+            }
         }
         
         free(file_data);
