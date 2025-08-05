@@ -293,7 +293,8 @@ void extract_bmp_file(struct fat32hdr *hdr, struct fat32dent *entry, const char 
         char sha1_str[41]; // 40 characters + null terminator
         calculate_sha1(file_data, bytes_read, sha1_str);
 
-        printf("%s %s\n", sha1_str, filename);
+        printf("%s  %s\n", sha1_str, filename);
+        fflush(stdout);
         
         /*
         // Create output directory
