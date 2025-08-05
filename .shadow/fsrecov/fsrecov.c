@@ -166,7 +166,8 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
     
     uint8_t *current_bytes = (uint8_t *)current_data;
     
-    uint32_t bytes_per_row = 64;
+    uint32_t pixels_per_row = 21;  // 21 pixels * 3 bytes = 63 bytes per row
+    uint32_t bytes_per_row = pixels_per_row * 3;
     uint32_t last_row_start = g_cluster_size - bytes_per_row;
     if (last_row_start >= g_cluster_size) last_row_start = g_cluster_size - bytes_per_row;
     
@@ -195,12 +196,23 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
         uint32_t total_diff = 0;
         uint32_t valid_pixels = 0;
         
-        for (uint32_t j = 0; j < bytes_per_row; j++) {
-            if (last_row_start + j < g_cluster_size && j < g_cluster_size) {
-                uint8_t current_pixel = current_bytes[last_row_start + j];
-                uint8_t candidate_pixel = candidate_bytes[j];
+        for (uint32_t j = 0; j < pixels_per_row; j++) {
+            uint32_t current_offset = last_row_start + (j * 3);
+            uint32_t candidate_offset = j * 3;
+            
+            if (current_offset + 2 < g_cluster_size && candidate_offset + 2 < g_cluster_size) {
+                uint8_t curr_r = current_bytes[current_offset];
+                uint8_t curr_g = current_bytes[current_offset + 1];
+                uint8_t curr_b = current_bytes[current_offset + 2];
                 
-                uint32_t diff = abs((int)current_pixel - (int)candidate_pixel);
+                uint8_t cand_r = candidate_bytes[candidate_offset];
+                uint8_t cand_g = candidate_bytes[candidate_offset + 1];
+                uint8_t cand_b = candidate_bytes[candidate_offset + 2];
+                
+                uint32_t diff = abs((int)curr_r - (int)cand_r) + 
+                               abs((int)curr_g - (int)cand_g) + 
+                               abs((int)curr_b - (int)cand_b);
+                
                 total_diff += diff;
                 valid_pixels++;
             }
@@ -209,19 +221,25 @@ uint32_t find_next_cluster(uint32_t current_cluster) {
         if (valid_pixels > 0) {
             uint32_t avg_diff = total_diff / valid_pixels;
 
+            // Check for non-zero RGB data
             int non_zero_count = 0;
-            for (uint32_t k = 0; k < 64; k++) {
-                if (candidate_bytes[k] != 0) non_zero_count++;
+            for (uint32_t k = 0; k < pixels_per_row && k * 3 + 2 < g_cluster_size; k++) {
+                if (candidate_bytes[k * 3] != 0 || 
+                    candidate_bytes[k * 3 + 1] != 0 || 
+                    candidate_bytes[k * 3 + 2] != 0) {
+                    non_zero_count++;
+                }
             }
             
-            if (avg_diff < min_diff && non_zero_count > 8) {
+            if (avg_diff < min_diff && non_zero_count > 3) {
                 min_diff = avg_diff;
                 best_cluster = candidate;
             }
         }
     }
     
-    if (min_diff < 128) {
+    // Increase threshold for RGB comparison (3 components * max 255 diff each = 765 max)
+    if (min_diff < 300) {
         return best_cluster;
     }
     
