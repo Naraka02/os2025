@@ -98,7 +98,7 @@ int kvdb_get(struct kvdb_t *db, const char *key, char *buf, size_t length) {
             buf[copy_len] = '\0';
 
             pthread_mutex_unlock(&db->mutex);
-            return copy_len;
+            return 0;
         }
     }
 
