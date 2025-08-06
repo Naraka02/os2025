@@ -11,7 +11,7 @@ static int recover_database(struct kvdb_t *db) {
             entry.committed = 1;
             lseek(db->fd, pos, SEEK_SET);
             write(db->fd, &entry, sizeof(log_entry_t));
-            fsync(db->fd);
+            // fsync(db->fd);
             pthread_mutex_unlock(&db->mutex);
         }
     }
@@ -58,10 +58,10 @@ int kvdb_put(struct kvdb_t *db, const char *key, const char *value) {
         return -1;
     }
 
-    if (fsync(db->fd) == -1) {
-        pthread_mutex_unlock(&db->mutex);
-        return -1;
-    }
+    // if (fsync(db->fd) == -1) {
+    //     pthread_mutex_unlock(&db->mutex);
+    //     return -1;
+    // }
 
     entry.committed = 1;
     lseek(db->fd, -sizeof(entry), SEEK_END);
@@ -70,7 +70,7 @@ int kvdb_put(struct kvdb_t *db, const char *key, const char *value) {
         return -1;
     }
 
-    fsync(db->fd);
+    // fsync(db->fd);
     
     pthread_mutex_unlock(&db->mutex);
     return 0;
