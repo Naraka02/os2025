@@ -92,7 +92,6 @@ int kvdb_get(struct kvdb_t *db, const char *key, char *buf, size_t length) {
             break;
         }
 
-        printf("key:%s entry.key:%s\n",key, entry.key);
         if (entry.committed == 1 && strcmp(entry.key, key) == 0) {
             size_t copy_len = (entry.value_len < length - 1) ? entry.value_len : length - 1;
             strncpy(buf, entry.value, copy_len);
