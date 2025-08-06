@@ -30,7 +30,6 @@ int kvdb_open(struct kvdb_t *db, const char *path) {
 
     if (flock(db->fd, LOCK_EX) == -1) {
         close(db->fd);
-        free(db->path);
         return -1;
     }
 
@@ -115,8 +114,6 @@ int kvdb_close(struct kvdb_t *db) {
     flock(db->fd, LOCK_UN);
     
     close(db->fd);
-    
-    free(db->path);
     
     pthread_mutex_unlock(&db->mutex);
     pthread_mutex_destroy(&db->mutex);
