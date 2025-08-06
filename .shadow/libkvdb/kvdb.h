@@ -20,7 +20,6 @@ typedef struct log_entry {
     int committed; // 0: not committed, 1: committed
 } log_entry_t;
 
-// Modify this struct.
 struct kvdb_t {
     const char *path;
     int fd;
