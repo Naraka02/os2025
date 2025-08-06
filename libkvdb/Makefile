@@ -11,6 +11,6 @@ $(NAME).so: $(LIB_SRCS) $(shell find . -name "*.h")
 	gcc $(CFLAGS) -fPIC -shared -o $(NAME).so $(LIB_SRCS)
 
 $(NAME)_test: $(TEST_SRCS) $(NAME).so $(shell find . -name "*.h")
-	gcc $(CFLAGS) -o $(NAME)_test $(TEST_SRCS) $(NAME).so
+	gcc $(CFLAGS) -o $(NAME)_test $(TEST_SRCS) ./$(NAME).so
 
 include ../.shadow/oslabs.mk
