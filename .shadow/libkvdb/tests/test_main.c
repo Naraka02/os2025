@@ -16,5 +16,9 @@ SystemTest(test_kvdb_put_get, ((const char *[]){})) {
 }
 
 int main() {
-    
+    struct kvdb_t db;
+    kvdb_open(&db, "/tmp/test.db");
+    kvdb_put(&db, "key", "value");
+    kvdb_get(&db, "key", NULL, 0);
+    kvdb_close(&db);
 }
