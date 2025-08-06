@@ -116,7 +116,7 @@ int kvdb_close(struct kvdb_t *db) {
     
     close(db->fd);
     
-    free(db->db_path);
+    free(db->path);
     
     pthread_mutex_unlock(&db->mutex);
     pthread_mutex_destroy(&db->mutex);
