@@ -77,13 +77,12 @@ int kvdb_put(struct kvdb_t *db, const char *key, const char *value) {
 }
 
 int kvdb_get(struct kvdb_t *db, const char *key, char *buf, size_t length) {
-    if (!db || !key || !buf) return -1;
+    if (!db || !key) return -1;
 
     pthread_mutex_lock(&db->mutex);
 
     off_t pos = lseek(db->fd, 0, SEEK_END);
     log_entry_t entry;
-printf("entry");
     while (pos >= sizeof(log_entry_t)) {
         pos -= sizeof(log_entry_t);
         lseek(db->fd, pos, SEEK_SET);
