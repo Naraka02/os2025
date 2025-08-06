@@ -83,11 +83,11 @@ int kvdb_get(struct kvdb_t *db, const char *key, char *buf, size_t length) {
 
     off_t pos = lseek(db->fd, 0, SEEK_END);
     log_entry_t entry;
-
+printf("entry");
     while (pos >= sizeof(log_entry_t)) {
         pos -= sizeof(log_entry_t);
         lseek(db->fd, pos, SEEK_SET);
-        printf("entry");
+        
 
         if (read(db->fd, &entry, sizeof(entry)) != sizeof(entry)) {
             break;
